@@ -36,6 +36,10 @@ Windows 从 10 2004 起支持蓝牙 A2DP Sink（让电脑当蓝牙音箱），�
 
 最后一条是关键。部分笔记本内置的 Intel / Realtek 适配器不开放接收能力，表现为「已经配对了手机，但列表里什么都没有」。这不是程序的问题，换一个支持 A2DP Sink 的 USB 适配器即可。
 
+## 下载
+
+到 [Releases](https://github.com/304713/soundbridge/releases/latest) 下载 `SoundBridge-1.3.0-win-x64.zip`，解压后双击 `SoundBridge.exe` 即可，免安装、不需要 .NET 运行库。
+
 ## 使用
 
 1. 在 Windows「蓝牙和其他设备」里把手机和电脑配对
