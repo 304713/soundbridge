@@ -1,0 +1,10 @@
+# 统一按 LF 存储，检出时按平台转换
+* text=auto
+
+*.cs      text diff=csharp
+*.xaml    text
+*.csproj  text
+*.md      text
+*.png     binary
+*.ico     binary
+*.msix    binary

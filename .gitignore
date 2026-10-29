@@ -1,0 +1,24 @@
+# 编译产物
+bin/
+obj/
+publish/
+dist/
+
+# MSIX 打包中间文件
+packaging/stage/
+packaging/*.msix
+packaging/*.msixupload
+packaging/*.pfx
+
+# 排查用的临时截图（项目根目录下的调试产物）
+*.png
+!docs/*.png
+!packaging/Assets/*.png
+
+# 编辑器 / 系统
+.vs/
+.vscode/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
