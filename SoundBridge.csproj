@@ -25,4 +25,10 @@
     <NoWarn>$(NoWarn);WFAC010</NoWarn>
   </PropertyGroup>
 
+  <!-- 发布构建不要把编译机的目录结构写进程序集（默认会带 CodeView 记录里的 .pdb 绝对路径） -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <PathMap>$(MSBuildProjectDirectory)=/soundbridge</PathMap>
+  </PropertyGroup>
+
 </Project>
