@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
@@ -14,7 +13,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        SourceInitialized += (_, _) => ApplyDarkTitleBar();
+        WindowChromeHelper.ApplyDarkTitleBar(this);
         Loaded += OnLoaded;
         Closing += OnClosing;
 
@@ -49,27 +48,4 @@ public partial class MainWindow : Window
             Hide();
         }
     }
-
-    private void ApplyDarkTitleBar()
-    {
-        try
-        {
-            var handle = new WindowInteropHelper(this).Handle;
-            if (handle == IntPtr.Zero) return;
-
-            var enabled = 1;
-            // 20 = DWMWA_USE_IMMERSIVE_DARK_MODE（Win10 2004+），19 用于更早的预览版
-            if (DwmSetWindowAttribute(handle, 20, ref enabled, sizeof(int)) != 0)
-            {
-                DwmSetWindowAttribute(handle, 19, ref enabled, sizeof(int));
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"设置深色标题栏失败: {ex.Message}");
-        }
-    }
-
-    [DllImport("dwmapi.dll", PreserveSig = true)]
-    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 }

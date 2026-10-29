@@ -259,6 +259,8 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                 <TextBlock Text="{Binding VersionText}" Style="{StaticResource Caption}"
                            Margin="0,0,14,0" VerticalAlignment="Center" />
+                <Button Content="使用说明" Style="{StaticResource LinkButton}" Margin="0,0,14,0"
+                        Command="{Binding OpenHelpCommand}" />
                 <Button Content="隐私说明" Style="{StaticResource LinkButton}"
                         Command="{Binding OpenPrivacyCommand}" />
             </StackPanel>

@@ -6,6 +6,7 @@ using Microsoft.Win32;
 using SoundBridge.Infrastructure;
 using SoundBridge.Models;
 using SoundBridge.Services;
+using SoundBridge.Views;
 
 namespace SoundBridge.ViewModels;
 
@@ -60,6 +61,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         PrimaryCommand = new AsyncRelayCommand(PrimaryActionAsync, () => !IsBusy && (IsConnected || SelectedDevice is not null));
         OpenLogCommand = new RelayCommand(OpenLog);
         OpenPrivacyCommand = new RelayCommand(ShowPrivacy);
+        OpenHelpCommand = new RelayCommand(ShowHelp);
+
+        // 设置在这里就读进来，而不是等 InitializeAsync：
+        // 首次引导的判断要赶在窗口显示时发生，那时初始化还没跑完。
+        _settingsService.Load();
     }
 
     public ObservableCollection<SinkDevice> Devices { get; } = new();
@@ -90,8 +96,39 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public AsyncRelayCommand PrimaryCommand { get; }
     public RelayCommand OpenLogCommand { get; }
     public RelayCommand OpenPrivacyCommand { get; }
+    public RelayCommand OpenHelpCommand { get; }
 
-    public string VersionText => "v1.2.0";
+    /// <summary>第一次打开软件，还没看过使用说明。</summary>
+    public bool ShouldShowWelcome => !_settingsService.Current.HasSeenWelcome;
+
+    public void MarkWelcomeSeen()
+    {
+        if (_settingsService.Current.HasSeenWelcome) return;
+
+        _settingsService.Current.HasSeenWelcome = true;
+        _settingsService.Save();
+        Log.Info("首次使用说明已阅");
+    }
+
+    private void ShowHelp()
+    {
+        try
+        {
+            var window = new WelcomeWindow(firstRun: false);
+            var owner = System.Windows.Application.Current?.MainWindow;
+
+            if (owner is not null && owner.IsVisible && !ReferenceEquals(owner, window))
+                window.Owner = owner;
+
+            window.ShowDialog();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("打开使用说明失败", ex);
+        }
+    }
+
+    public string VersionText => "v1.3.0";
 
     public SinkDevice? SelectedDevice
     {
@@ -202,7 +239,6 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (_initialized) return;
         _initialized = true;
 
-        _settingsService.Load();
         var settings = _settingsService.Current;
 
         _autoStart = AutoStartService.IsEnabled();

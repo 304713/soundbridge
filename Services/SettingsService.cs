@@ -12,6 +12,9 @@ public sealed class AppSettings
     public bool AutoConnectOnStart { get; set; }
     public string? LastDeviceName { get; set; }
 
+    /// <summary>是否已经看过首次使用说明。</summary>
+    public bool HasSeenWelcome { get; set; }
+
     /// <summary>用户指定的播放设备 ID；null 表示不干预系统默认设置。</summary>
     public string? OutputDeviceId { get; set; }
     public string? OutputDeviceName { get; set; }

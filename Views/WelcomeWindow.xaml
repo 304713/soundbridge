@@ -1,0 +1,144 @@
+<Window x:Class="SoundBridge.Views.WelcomeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="声桥 · 使用说明"
+        Width="740" Height="740"
+        MinWidth="680" MinHeight="460"
+        Background="{StaticResource WindowBgBrush}"
+        WindowStartupLocation="CenterScreen"
+        FontFamily="Microsoft YaHei UI, Segoe UI"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+
+    <Grid Margin="24,20,24,18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 头部 -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="2,0,0,18">
+            <Border Width="40" Height="40" CornerRadius="11" Background="{StaticResource AccentBrush}">
+                <TextBlock Text="&#9834;" FontFamily="Segoe UI Symbol" FontSize="22" Foreground="White"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <StackPanel Margin="13,0,0,0" VerticalAlignment="Center">
+                <TextBlock Text="开始之前，先把话说清楚" Style="{StaticResource H1}" />
+                <TextBlock Text="看完这一页，能省掉九成的「为什么连不上」。"
+                           Style="{StaticResource Caption}" Margin="0,2,0,0" />
+            </StackPanel>
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,0,8,0">
+            <StackPanel>
+
+                <!-- 它做什么 -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="它只做一件事" Style="{StaticResource SectionLabel}" Margin="0,0,0,8" />
+                        <TextBlock Style="{StaticResource Body}"
+                                   Text="手机负责播放，电脑负责出声。手机上正在放的歌、视频、语音，从电脑的耳机或音箱出来。" />
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,8,0,0" LineHeight="19"
+                                   Text="所有声音都在你自己的两台设备之间走蓝牙，不经过任何服务器。" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 前置条件：最容易被忽略的 -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,12"
+                        BorderBrush="{StaticResource ErrorBrush}" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="⚠ 先确认这两条，否则装上也用不了" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="{StaticResource ErrorBrush}" Margin="0,0,0,12" />
+
+                        <TextBlock Text="① 电脑的蓝牙适配器要支持「接收」音频（A2DP Sink）" Style="{StaticResource BodyStrong}"
+                                   Margin="0,0,0,6" />
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,6"
+                                   Text="这是最容易踩的坑。很多笔记本内置的 Intel / Realtek 适配器只开放「发送」，不开放「接收」—— 也就是它能连蓝牙耳机，但不能当蓝牙音箱用。" />
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,6"
+                                   Text="表现是：手机和电脑明明配对成功了，声桥的列表里却空空如也，刷新多少次都一样。" />
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,6"
+                                   Text="这不是设置问题，也不是程序的问题 —— 是 Windows 在这个适配器上根本提供不出接收接口。" />
+                        <Border Margin="0,6,0,0" Padding="11,9" CornerRadius="8"
+                                Background="{StaticResource SurfaceAltBrush}">
+                            <StackPanel>
+                                <TextBlock Text="怎么判断" Style="{StaticResource SectionLabel}" Margin="0,0,0,5"
+                                           Foreground="{StaticResource TextSecondaryBrush}" />
+                                <TextBlock Style="{StaticResource Body}" FontSize="12.5" LineHeight="20"
+                                           Text="装上之后列表里出现了你的手机 → 支持，正常用。" />
+                                <TextBlock Style="{StaticResource Body}" FontSize="12.5" LineHeight="20"
+                                           Text="列表是空的、提示找不到设备 → 先怀疑适配器，别在系统和手机上反复折腾。" />
+                                <TextBlock Style="{StaticResource Caption}" FontSize="11.5" LineHeight="18" Margin="0,6,0,0"
+                                           Text="解决办法：换一个支持 A2DP Sink 的 USB 蓝牙适配器（几十块钱），或者换台电脑。软件层面绕不过去。" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="② 系统要 Windows 10 2004（内部版本 19041）或更高" Style="{StaticResource BodyStrong}"
+                                   Margin="0,14,0,6" />
+                        <TextBlock Style="{StaticResource Body}"
+                                   Text="低于这个版本，Windows 本身还没有蓝牙音频接收能力，任何软件都补不出来。" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 其他用不了的情况 -->
+                <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="这些情况也会连不上 / 用不了" Style="{StaticResource SectionLabel}" Margin="0,0,0,10" />
+
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,8">
+                            <Run Text="· 手机正连着蓝牙耳机或音箱" FontWeight="SemiBold" Foreground="#E7EAED" />
+                            <Run Text="　先在手机上断开，同一时间只能有一个音频接收方。" />
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,8">
+                            <Run Text="· 已经有别的接收程序在跑" FontWeight="SemiBold" Foreground="#E7EAED" />
+                            <Run Text="　比如 BleAudio、Bluetooth Audio Receiver。接收端是独占的，先把那个关掉。" />
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,8">
+                            <Run Text="· 提示「系统拒绝了这次连接」" FontWeight="SemiBold" Foreground="#E7EAED" />
+                            <Run Text="　多半就是上面两条之一。先查手机有没有连着别的设备。" />
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,8">
+                            <Run Text="· 想用它控制手机播放" FontWeight="SemiBold" Foreground="#E7EAED" />
+                            <Run Text="　做不到。上一首 / 下一首 / 暂停走 AVRCP 协议，Windows 没有公开这套接口。请用手机本身操作。" />
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,8">
+                            <Run Text="· 想给电脑接蓝牙耳机" FontWeight="SemiBold" Foreground="#E7EAED" />
+                            <Run Text="　那是 Windows 自带的「发送」方向，和声桥无关。两者可以串起来：手机 → 电脑 → 蓝牙耳机。" />
+                        </TextBlock>
+                        <TextBlock Style="{StaticResource Body}">
+                            <Run Text="· 希望看视频音画完全同步" FontWeight="SemiBold" Foreground="#E7EAED" />
+                            <Run Text="　蓝牙传输本身有 0.2 秒左右的延迟，听歌无感，看视频口型会慢半拍。这是协议决定的，改不了。" />
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+
+                <!-- 三步 -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="满足条件的话，三步就能出声" Style="{StaticResource SectionLabel}" Margin="0,0,0,10" />
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,6"
+                                   Text="1. 在 Windows「蓝牙和其他设备」里，把手机和这台电脑配对。" />
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,6"
+                                   Text="2. 回到声桥，选中你的手机，点「连接」。" />
+                        <TextBlock Style="{StaticResource Body}" Margin="0,0,0,6"
+                                   Text="3. 在手机上放音频，声音就从电脑出来了。" />
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0" LineHeight="19"
+                                   Text="连上之后，如果电脑这边没声音，先看界面下方的「声音输出到」选的是不是你想听的那台设备。" />
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- 底部 -->
+        <Grid Grid.Row="2" Margin="2,16,2,0">
+            <TextBlock x:Name="FooterHint" Style="{StaticResource Caption}" VerticalAlignment="Center"
+                       Text="这份说明随时能在主界面右下角重新打开。" />
+            <Button x:Name="OkButton" Content="我知道了" Width="128" Height="40"
+                    Style="{StaticResource ActionButton}"
+                    HorizontalAlignment="Right" VerticalAlignment="Center"
+                    IsDefault="True" Click="OnOkClick" />
+        </Grid>
+    </Grid>
+</Window>

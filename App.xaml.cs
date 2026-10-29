@@ -74,6 +74,28 @@ public partial class App : System.Windows.Application
         else
         {
             _window.Show();
+
+            // 第一次打开：先把「什么情况下用不了」摆到眼前，再进主界面。
+            // 开机静默启动（--tray）不弹，留给下次正常打开时再说。
+            if (_viewModel.ShouldShowWelcome) ShowWelcome();
+        }
+    }
+
+    private void ShowWelcome()
+    {
+        if (_viewModel is null || _window is null) return;
+
+        try
+        {
+            var welcome = new WelcomeWindow(firstRun: true) { Owner = _window };
+            welcome.ShowDialog();
+
+            // 不管是点「我知道了」还是直接关掉，都算看过了 —— 别每次开机都拦一次
+            _viewModel.MarkWelcomeSeen();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("显示首次使用说明失败", ex);
         }
     }
 
