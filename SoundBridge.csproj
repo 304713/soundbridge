@@ -18,9 +18,9 @@
     <AssemblyDescription>把手机的声音转到电脑播放（蓝牙音频接收器）</AssemblyDescription>
     <Company>声桥</Company>
     <Copyright>© 2026 声桥</Copyright>
-    <Version>1.1.1</Version>
-    <FileVersion>1.1.1.0</FileVersion>
-    <InformationalVersion>1.1.1</InformationalVersion>
+    <Version>1.2.0</Version>
+    <FileVersion>1.2.0.0</FileVersion>
+    <InformationalVersion>1.2.0</InformationalVersion>
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
     <NoWarn>$(NoWarn);WFAC010</NoWarn>
   </PropertyGroup>

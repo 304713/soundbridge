@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using SoundBridge.Infrastructure;
 using SoundBridge.Models;
 using SoundBridge.Services;
@@ -39,6 +40,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// <summary>用户在启动自连过程中手动断开，就别再自动连回去了。</summary>
     private bool _userCancelledStartup;
 
+    /// <summary>休眠前是否处于已连接状态，唤醒后据此决定要不要恢复。</summary>
+    private bool _connectedBeforeSuspend;
+
+    /// <summary>唤醒恢复流程正在跑，避免连续几次 Resume 触发重复重连。</summary>
+    private bool _resumeInProgress;
+
     public MainViewModel()
     {
         _dispatcher = Dispatcher.CurrentDispatcher;
@@ -46,6 +53,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _connection = new ConnectionService();
         _connection.StateChanged += OnConnectionStateChanged;
         _connection.DroppedUnexpectedly += OnDroppedUnexpectedly;
+
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
         RefreshCommand = new AsyncRelayCommand(RefreshDevicesAsync);
         PrimaryCommand = new AsyncRelayCommand(PrimaryActionAsync, () => !IsBusy && (IsConnected || SelectedDevice is not null));
@@ -82,7 +91,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand OpenLogCommand { get; }
     public RelayCommand OpenPrivacyCommand { get; }
 
-    public string VersionText => "v1.1.1";
+    public string VersionText => "v1.2.0";
 
     public SinkDevice? SelectedDevice
     {
@@ -234,10 +243,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         await ConnectWithRetryAsync(device);
     }
 
-    /// <summary>反复扫描，直到蓝牙栈就绪或超时（最多等 2 分钟）。</summary>
-    private async Task WaitForDevicesAsync()
+    /// <summary>反复扫描，直到蓝牙栈就绪或超时（默认最多等 2 分钟）。</summary>
+    private async Task WaitForDevicesAsync(int timeoutSeconds = 120)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(120);
+        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
         var attempt = 0;
 
         while (true)
@@ -251,7 +260,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             if (DateTime.UtcNow >= deadline)
             {
-                Log.Warn("等待蓝牙就绪超时（120 秒），仍未扫描到设备");
+                Log.Warn($"等待蓝牙就绪超时（{timeoutSeconds} 秒），仍未扫描到设备");
                 return;
             }
 
@@ -331,10 +340,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         foreach (var output in outputs) Outputs.Add(output);
 
         var savedId = _settingsService.Current.OutputDeviceId;
+        var savedName = _settingsService.Current.OutputDeviceName;
+
+        // 睡眠唤醒后 USB 声卡会重新枚举，endpoint 的 GUID 可能整个变掉，
+        // 只按 ID 找会失配，所以再按名字兜一层。
         var pick = (savedId is not null ? Outputs.FirstOrDefault(o => o.Id == savedId) : null)
+                   ?? (savedName is not null ? Outputs.FirstOrDefault(o => o.Name == savedName) : null)
                    ?? Outputs.FirstOrDefault(o => o.IsDefault)
                    ?? Outputs.FirstOrDefault(o => o.Name.Contains("扬声器") || o.Name.Contains("Speakers", StringComparison.OrdinalIgnoreCase))
                    ?? Outputs.FirstOrDefault();
+
+        // 走了名字兜底说明 ID 变了，把新 ID 记回去，下次就不用再猜
+        if (pick is not null && !string.IsNullOrEmpty(savedId) && !string.Equals(pick.Id, savedId, StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Info($"播放设备 ID 已变化，按名称重新匹配: {pick.Name}");
+            _settingsService.Current.OutputDeviceId = pick.Id;
+            _settingsService.Current.OutputDeviceName = pick.Name;
+            _settingsService.Save();
+        }
 
         // 直接写字段，避免 setter 把这次「恢复选择」当成用户操作再存一遍盘
         _selectedOutput = pick;
@@ -385,6 +408,10 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         CancelRetry();
         _retryAttempt = 0;
         SelectedDevice = device;
+
+        // 手动连接等于重新表态：之前那次「用户主动断开」的标记要清掉，
+        // 否则后面的重试循环会以为自己被取消了。
+        _userCancelledStartup = false;
 
         _settingsService.Current.LastDeviceName = device.Name;
         _settingsService.Save();
@@ -450,6 +477,98 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         finally
         {
             _retryAttempt = 0;
+        }
+    }
+
+    /// <summary>
+    /// 系统睡眠 / 休眠会拆掉蓝牙链路，唤醒后旧的 AudioPlaybackConnection 句柄已经作废，
+    /// 它既不会抛异常，也不一定触发 Closed —— 表现就是界面还显示「已连接」但没有声音。
+    /// 所以唤醒后必须把对象丢掉重建，不能指望那条 StateChanged 事件醒来。
+    /// </summary>
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode == PowerModes.Suspend)
+        {
+            _connectedBeforeSuspend = _connection.State == ConnState.Connected;
+            Log.Info($"系统即将睡眠/休眠，当前状态 = {_connection.State}");
+            CancelRetry();
+            return;
+        }
+
+        if (e.Mode != PowerModes.Resume) return;
+
+        Log.Info($"系统已唤醒（睡眠前 {(_connectedBeforeSuspend ? "已连接" : "未连接")}）");
+        _dispatcher.InvokeAsync(() => _ = HandleResumeAsync());
+    }
+
+    private async Task HandleResumeAsync()
+    {
+        if (_resumeInProgress) return;
+        _resumeInProgress = true;
+
+        try
+        {
+            var wasConnected = _connectedBeforeSuspend;
+            _connectedBeforeSuspend = false;
+
+            // 睡眠中可能已经启动了断线重连循环（它的延时会在唤醒后继续跑），先掐掉。
+            CancelRetry();
+
+            // 唤醒瞬间蓝牙适配器还在重新初始化，这时候碰它只会拿到一串失败。
+            // 2.5 秒是经验值：绝大多数适配器在这个窗口内恢复广播与端点枚举。
+            await Task.Delay(2500);
+
+            // 丢掉那张作废的「连接凭证」
+            await _connection.DisconnectAsync(silent: true);
+            ApplyState(ConnState.Idle, "未连接", "系统已唤醒，正在恢复蓝牙连接…");
+
+            // 睡前连着，醒来就必须接回去；睡前没连，但开了自动重连且有上次的设备，也试一次
+            var shouldReconnect = wasConnected
+                                  || (AutoReconnect && !string.IsNullOrEmpty(_settingsService.Current.LastDeviceName));
+
+            if (!shouldReconnect)
+            {
+                await RefreshDevicesAsync();
+                Log.Info("唤醒后未恢复连接：睡眠前未连接且未开启自动重连");
+                return;
+            }
+
+            _userCancelledStartup = false;
+
+            // 唤醒后蓝牙栈就绪比开机时还慢，给足 90 秒，别只扫一次就判死
+            await WaitForDevicesAsync(90);
+
+            if (Devices.Count == 0)
+            {
+                ApplyState(ConnState.Error, "未连接", "唤醒后没有扫描到手机，请确认手机蓝牙已打开，然后点「刷新设备」。");
+                Log.Warn("唤醒后恢复失败：没有可用设备");
+                return;
+            }
+
+            var target = Devices.FirstOrDefault(d => d.Name == _settingsService.Current.LastDeviceName)
+                         ?? SelectedDevice
+                         ?? Devices[0];
+
+            StatusDetail = $"系统已唤醒，正在重新连接 {target.Name}…";
+            Log.Info($"唤醒后重新连接: {target.Name}");
+
+            await ConnectWithRetryAsync(target);
+
+            if (_connection.State != ConnState.Connected)
+            {
+                // 重连窗口用尽了：别停在「已连接」的假象上，交给用户一键重试
+                ApplyState(ConnState.Error, "未连接", "唤醒后没能自动接上，点「连接」再试一次。");
+                Log.Warn("唤醒后重连失败");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("唤醒后恢复连接出错", ex);
+            ApplyState(ConnState.Error, "未连接", "唤醒后恢复失败，点「连接」再试一次。");
+        }
+        finally
+        {
+            _resumeInProgress = false;
         }
     }
 
@@ -528,6 +647,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         CancelRetry();
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _connection.StateChanged -= OnConnectionStateChanged;
         _connection.DroppedUnexpectedly -= OnDroppedUnexpectedly;
         _connection.Dispose();
