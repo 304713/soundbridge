@@ -9,6 +9,8 @@ packaging/stage/
 packaging/*.msix
 packaging/*.msixupload
 packaging/*.pfx
+packaging/*.cer
+packaging/test-sign.*
 
 # 排查用的临时截图（项目根目录下的调试产物）
 *.png

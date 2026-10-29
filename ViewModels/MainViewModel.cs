@@ -210,7 +210,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(AutoReconnect));
         OnPropertyChanged(nameof(AutoConnectOnStart));
 
-        Log.Info("应用启动");
+        Log.Info(PackageIdentity.IsPackaged ? "应用启动（打包/商店版）" : "应用启动（免安装版）");
 
         // 刚登录时蓝牙栈常常还没就绪，第一次扫描会返回空列表。
         // 这里给它一段时间反复扫，而不是扫一次就放弃。

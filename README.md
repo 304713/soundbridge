@@ -57,6 +57,8 @@ dotnet publish -c Release -r win-x64 --self-contained true \
   -p:IncludeNativeLibrariesForSelfExtract=true -o dist
 ```
 
+打包成 MSIX（Microsoft Store 用的格式）见 [`packaging/README.md`](packaging/README.md)。
+
 ## 一个踩过的坑
 
 Windows 有个反直觉的行为：**默认输出设备消失后，它不会回落到别的设备，而是钉住那个已失效的设备**。于是会出现「手机连上了、界面显示已连接，但一点声音都没有，连 3.5mm 耳机也没声」。
