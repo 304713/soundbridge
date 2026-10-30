@@ -6,7 +6,7 @@
 
 ## 摘要（请先看这段）
 
-声桥是一个**免费、开源、纯本地**的小工具。它不做任何保证——包括不保证能在你的电脑上正常工作。
+声桥是一个**免费、开源、纯本地**的小工具，由个人开发者在业余时间维护，**不是商业产品**，不收费、无内购、无广告。它不做任何保证——包括不保证能在你的电脑上正常工作。
 
 最需要你确认的一点：**它能否使用，取决于你的蓝牙适配器是否支持「音频接收」（A2DP Sink）。** 硬件不支持时，软件装上也用不了，这不是缺陷，是 Windows 在该硬件上根本不提供相应接口。详见第 2 条。
 
@@ -14,9 +14,17 @@
 
 ---
 
-## 1. 软件按「现状」提供
+## 1. 免费、非商业、按「现状」提供
 
-本软件按「现状」（AS IS）和「现有可用」（AS AVAILABLE）提供，不附带任何形式的明示或默示担保，包括但不限于：
+本软件由个人开发者以业余时间编写，**免费提供，不收取任何费用**，也不通过本软件获取任何收入：
+
+- 无付费版、无内购、无订阅、无广告、无强制捐赠
+- 不提供商业授权、定制开发或付费技术支持
+- 不销售任何与运行本软件相关的配套产品
+
+因此，本软件的提供**不构成商品销售或商业服务**，作者的身份是个人分享者，而非销售者、服务提供者或《电子商务法》意义上的经营者。不过这不等于「免费即无责」：若你所在法域的法律仍将免费软件的分发纳入产品责任范围，作者的责任以适用法律允许的最低限度为限（见第 7 条）。
+
+在「现状」的基础上，本软件按「现有可用」（AS AVAILABLE）提供，不附带任何形式的明示或默示担保，包括但不限于：
 
 - 适销性担保
 - 特定用途适用性担保
@@ -117,6 +125,8 @@
 ## English Summary
 
 SoundBridge is free, open-source, local-only software provided **"AS IS"**, without warranty of any kind.
+
+It is a personal, non-commercial project: no fee is charged, and there is no paid tier, subscription, in-app purchase, advertising, or paid support. Its distribution does not constitute a commercial sale or service.
 
 **It only works if your Bluetooth adapter supports A2DP Sink (audio receiving).** Many built-in Intel/Realtek adapters do not, and no software can work around that hardware limitation.
 
