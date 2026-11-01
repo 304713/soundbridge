@@ -26,10 +26,13 @@ public sealed class AppSettings
     public int VolumeCapPercent { get; set; } = 80;
 
     /// <summary>
-    /// 定时关闭到点后是否响一声。默认关：这个功能多半是在睡前用的，
+    /// 定时到点后是否响铃。默认关：这个功能多半是在睡前用的，
     /// 半夜突然来一声音效只会把人吵醒。
     /// </summary>
     public bool SleepTimerChime { get; set; }
+
+    /// <summary>上次在「自定义…」里填的分钟数，下次打开对话框直接带出来。</summary>
+    public int CustomSleepMinutes { get; set; } = 20;
 }
 
 public sealed class SettingsService

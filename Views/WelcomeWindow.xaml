@@ -99,7 +99,7 @@
                                         Background="{StaticResource SurfaceAltBrush}">
                                     <StackPanel>
                                         <TextBlock Style="{StaticResource Body}" FontSize="12.5" LineHeight="19"
-                                                   Text="判断：列表里有你的手机 → 支持；一直是空的 → 就是它。" />
+                                                   Text="判断：两边蓝牙都打开时列表里能看到手机 → 支持；一直是空的 → 就是它。" />
                                         <TextBlock Style="{StaticResource Caption}" FontSize="11.5" LineHeight="18" Margin="0,4,0,0"
                                                    Text="解法：换支持 A2DP Sink 的 USB 适配器（几十块）。软件绕不过去。" />
                                     </StackPanel>
@@ -190,7 +190,17 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="列表里一直是空的" Style="{StaticResource Symptom}" />
                             <TextBlock Grid.Column="1" Style="{StaticResource Cause}"
-                                       Text="适配器不支持接收、手机没配对，或者系统版本太低。回到上面两条自检。" />
+                                       Text="最常见的是蓝牙关着——电脑关蓝牙、手机开飞行模式，这里都是空的。其次是没配对、适配器不支持接收、系统版本太低。回到上面两条自检。" />
+                        </Grid>
+
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="176" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="关过蓝牙，手机就不见了" Style="{StaticResource Symptom}" />
+                            <TextBlock Grid.Column="1" Style="{StaticResource Cause}"
+                                       Text="蓝牙关掉再打开，接收端要重新枚举：电脑这边几秒后自己会回来；手机那边在系统蓝牙设置里点一下这台电脑，让它重新连。" />
                         </Grid>
 
                         <Grid Margin="0,0,0,8">

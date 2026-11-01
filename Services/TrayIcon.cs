@@ -66,6 +66,9 @@ public sealed class TrayIcon : IDisposable
     private bool _added;
     private bool _disposed;
 
+    /// <summary>菜单正开着。用返回值控制重入，而不是靠 TrackPopupMenu 自己拦。</summary>
+    private bool _menuOpen;
+
     public TrayIcon(Action activate, Action showContextMenu)
     {
         _activate = activate;
@@ -98,8 +101,17 @@ public sealed class TrayIcon : IDisposable
     {
         if (_disposed) return;
 
+        // TrackPopupMenu 里跑的是模态消息循环，期间再收到一次右键就会把菜单叠起来。
+        // 叠一层看不出来，但点选之后会连着触发两次，退出之类的操作就可能执行两遍。
+        if (_menuOpen) return;
+        _menuOpen = true;
+
         var menu = CreatePopupMenu();
-        if (menu == IntPtr.Zero) return;
+        if (menu == IntPtr.Zero)
+        {
+            _menuOpen = false;
+            return;
+        }
 
         var actions = new List<Action?>(entries.Count);
 
@@ -150,6 +162,7 @@ public sealed class TrayIcon : IDisposable
         finally
         {
             DestroyMenu(menu);
+            _menuOpen = false;
         }
     }
 
@@ -206,7 +219,9 @@ public sealed class TrayIcon : IDisposable
     {
         if (_disposed) return DefWindowProc(hwnd, message, wParam, lParam);
 
-        if (message == TaskbarCreated)
+        // 注册失败时 TaskbarCreated 是 0，而 0 正好等于 WM_NULL——
+        // 不判一下的话，任何一条空消息都会把图标重挂一遍
+        if (TaskbarCreated != 0 && message == TaskbarCreated)
         {
             _added = false;
             Add();

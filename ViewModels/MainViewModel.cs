@@ -41,6 +41,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private SleepTimerOption _selectedSleepTimer = SleepTimerOption.Off;
     private bool _sleepTimerChime;
 
+    /// <summary>自定义时长的对话框正开着。避免连着两次改选中项弹出两个窗口。</summary>
+    private bool _customTimerOpen;
+
     /// <summary>到点时刻。用绝对时间而不是自减计数，机器睡过去再醒来也不会算错。</summary>
     private DateTime _sleepDeadline;
     private string _sleepTimerText = string.Empty;
@@ -112,6 +115,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SleepTimerOptions = new ObservableCollection<SleepTimerOption>
         {
             SleepTimerOption.Off,
+            SleepTimerOption.Custom,
             new() { Minutes = 15, Label = "15 分钟" },
             new() { Minutes = 30, Label = "30 分钟" },
             new() { Minutes = 45, Label = "45 分钟" },
@@ -306,11 +310,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _canFixOutputManually, value);
     }
 
-    public string EmptyHint => EmptyHintDetail;
+    public string EmptyHint => _emptyHint;
 
-    private const string EmptyHintDetail =
-        "先确认手机已经和这台电脑配对，再点「刷新」。还是空的，多半是电脑的蓝牙不支持接收音频——" +
-        "点左下角「使用说明」，那里写了怎么判断。";
+    private string _emptyHint = EmptyHintDefault;
+
+    private const string EmptyHintDefault =
+        "先确认手机已和这台电脑配对、两边的蓝牙都开着，再点「刷新」。还不行就看左下角「使用说明」。";
+
+    private const string EmptyHintBluetoothOff =
+        "电脑的蓝牙关着。打开「设置 → 蓝牙和其他设备」里的开关，手机会自己出现。";
+
+    private const string EmptyHintBluetoothDisabled =
+        "蓝牙适配器被禁用了。到「设备管理器」里重新启用，再点「刷新」。";
+
+    private const string EmptyHintPhoneBluetoothOff =
+        "电脑这边正常，问题多半在手机：蓝牙关着、开了飞行模式，或者不在附近。都排除了还是空的，" +
+        "就是这台电脑不支持接收音频，看左下角「使用说明」。";
 
     public bool AutoStart
     {
@@ -376,7 +391,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<SleepTimerOption> SleepTimerOptions { get; }
 
     /// <summary>
-    /// 定时关闭。选一个时长就开始倒数，到点断开连接——手机那边的播放器
+    /// 定时暂停。选一个时长就开始倒数，到点断开连接——手机那边的播放器
     /// 大多会跟着停下，这比在手机上翻出来点暂停可靠得多。
     /// </summary>
     public SleepTimerOption SelectedSleepTimer
@@ -384,7 +399,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         get => _selectedSleepTimer;
         set
         {
-            if (value is null || !SetProperty(ref _selectedSleepTimer, value)) return;
+            if (value is null) return;
+
+            if (value.IsCustom)
+            {
+                // 「自定义…」只是一扇门：选中它不代表要计时，先把上一次的选择记下来，
+                // 等对话框给回答案再决定；用户取消就退回原来那一项。
+                var previous = _selectedSleepTimer;
+                _selectedSleepTimer = value;
+                OnPropertyChanged(nameof(SelectedSleepTimer));
+
+                // 等下拉框把这次选择处理完再弹窗：在 SelectionChanged 里直接开模态窗口，
+                // 弹出层还在收尾，焦点会被抢回去，看起来像点了没反应。
+                _dispatcher.InvokeAsync(() => AskCustomTimer(previous), DispatcherPriority.Background);
+                return;
+            }
+
+            if (!SetProperty(ref _selectedSleepTimer, value)) return;
 
             if (value.Minutes <= 0)
             {
@@ -394,6 +425,54 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             {
                 StartSleepTimer(value.Minutes);
             }
+        }
+    }
+
+    /// <summary>自定义时长对话框。确定后这个时长会作为普通选项留在下拉框里。</summary>
+    private void AskCustomTimer(SleepTimerOption previous)
+    {
+        if (_customTimerOpen) return;
+
+        _customTimerOpen = true;
+        try
+        {
+            var minutes = TimerWindow.Ask(
+                Application.Current?.MainWindow, _settingsService.Current.CustomSleepMinutes);
+
+            if (minutes is null)
+            {
+                _selectedSleepTimer = previous;
+                OnPropertyChanged(nameof(SelectedSleepTimer));
+                return;
+            }
+
+            _settingsService.Current.CustomSleepMinutes = minutes.Value;
+            _settingsService.Save();
+
+            // 只留一个自定义项，免得下拉框里堆一长串「7 分钟」「8 分钟」
+            var stale = SleepTimerOptions.FirstOrDefault(o => o.IsUserDefined);
+            if (stale is not null) SleepTimerOptions.Remove(stale);
+
+            var option = new SleepTimerOption
+            {
+                Minutes = minutes.Value,
+                Label = $"{minutes.Value} 分钟",
+                IsUserDefined = true
+            };
+
+            // 紧跟「自定义…」，固定排在最上面：用户刚填的值，下次一眼就能选回来
+            SleepTimerOptions.Insert(2, option);
+            SelectedSleepTimer = option;
+        }
+        catch (Exception ex)
+        {
+            Log.Error("打开自定义定时失败", ex);
+            _selectedSleepTimer = previous;
+            OnPropertyChanged(nameof(SelectedSleepTimer));
+        }
+        finally
+        {
+            _customTimerOpen = false;
         }
     }
 
@@ -408,7 +487,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>界面上的倒计时，形如「12:34 后断开」；未启用时为空。</summary>
+    /// <summary>界面上的倒计时，形如「12:34 后暂停」；未启用时为空。</summary>
     public string SleepTimerText => _sleepTimerText;
 
     /// <summary>托盘提示用的粗粒度倒计时，一分钟才变一次，免得每秒都去改托盘文字。</summary>
@@ -442,6 +521,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SleepTimerChime));
 
         Log.Info(PackageIdentity.IsPackaged ? "应用启动（打包/商店版）" : "应用启动（免安装版）");
+
+#if DEBUG
+        // 只用于调试构建：设了 SOUNDBRIDGE_SLEEP_MIN 就在启动时直接把定时挂上，
+        // 省得为了验证「到点」这件事每次都等十五分钟。
+        if (int.TryParse(Environment.GetEnvironmentVariable("SOUNDBRIDGE_SLEEP_MIN"), out var testMinutes)
+            && testMinutes > 0)
+        {
+            SleepTimerOptions.Insert(2, new SleepTimerOption { Minutes = testMinutes, Label = $"{testMinutes} 分钟" });
+            SelectedSleepTimer = SleepTimerOptions[2];
+            Log.Info($"调试用定时已挂上：{testMinutes} 分钟");
+        }
+#endif
 
         // 刚登录时蓝牙栈常常还没就绪，第一次扫描会返回空列表。
         // 这里给它一段时间反复扫，而不是扫一次就放弃。
@@ -554,6 +645,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         HasDevices = Devices.Count > 0;
+        if (Devices.Count == 0) await UpdateEmptyHintAsync();
 
         var target = selectedId is not null ? Devices.FirstOrDefault(d => d.Id == selectedId) : null;
         SelectedDevice = target ?? Devices.FirstOrDefault();
@@ -563,6 +655,29 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // 手动刷新每次都记，自动轮询只在数量真的变了时记——否则日志里全是同一行
         if (refreshOutputs || countBefore != Devices.Count)
             Log.Info($"设备列表已更新，共 {Devices.Count} 台");
+    }
+
+    /// <summary>
+    /// 列表是空的时候，先说清楚是「哪一边的蓝牙没开」。
+    /// 以前这三种情况共用一句话，用户看完只能去翻说明；而「打开蓝牙」和「换适配器」是两件完全不同的事。
+    /// </summary>
+    private async Task UpdateEmptyHintAsync()
+    {
+        var state = await _deviceService.GetBluetoothStateAsync();
+
+        var hint = state switch
+        {
+            BluetoothState.Off => EmptyHintBluetoothOff,
+            BluetoothState.Disabled => EmptyHintBluetoothDisabled,
+            BluetoothState.On => EmptyHintPhoneBluetoothOff,
+            _ => EmptyHintDefault
+        };
+
+        if (_emptyHint == hint) return;
+
+        _emptyHint = hint;
+        OnPropertyChanged(nameof(EmptyHint));
+        Log.Info($"没找到设备，提示按蓝牙状态切换：{state}");
     }
 
     /// <summary>刷新可选的播放设备，并保持当前选择。</summary>
@@ -744,7 +859,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _sleepDeadline = DateTime.Now.AddMinutes(minutes);
         _sleepTimer.Start();
         UpdateSleepTimerText();
-        Log.Info($"定时关闭已设定：{minutes} 分钟后断开");
+        Log.Info($"定时暂停已设定：{minutes} 分钟后暂停");
     }
 
     private void StopSleepTimer()
@@ -752,7 +867,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (_sleepTimer.IsEnabled)
         {
             _sleepTimer.Stop();
-            Log.Info("定时关闭已取消");
+            Log.Info("定时暂停已取消");
         }
 
         _sleepDeadline = default;
@@ -764,7 +879,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var left = _sleepDeadline - DateTime.Now;
         if (left <= TimeSpan.Zero)
         {
-            _ = GuardAsync(FireSleepTimerAsync, "定时断开");
+            _ = GuardAsync(FireSleepTimerAsync, "定时暂停");
             return;
         }
 
@@ -780,8 +895,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var minutesLeft = (int)Math.Ceiling(left.TotalMinutes);
 
         SetSleepTimerText(
-            $"{mmss} 后断开",
-            minutesLeft <= 1 ? "即将断开" : $"{minutesLeft} 分钟后断开");
+            $"{mmss} 后暂停",
+            minutesLeft <= 1 ? "即将暂停" : $"{minutesLeft} 分钟后暂停");
     }
 
     private void SetSleepTimerText(string window, string tray)
@@ -819,12 +934,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         {
             // DisconnectAsync 会顺手打上「用户主动断开」的标记，
             // 否则「断线自动重连」会马上把它接回来，定时就成了摆设。
-            await DisconnectAsync();
+            await DisconnectAsync(byUser: false);
 
             // 断开时服务层还会回抛一次状态事件，排队排在前面；
             // 用 Background 优先级落到队列末尾，才能把提示文字换成我们这句。
             _ = _dispatcher.InvokeAsync(
-                () => StatusDetail = "定时到了，已断开。想接着听，点「连接」。",
+                () => StatusDetail = "定时到了，已暂停。想接着听，点「连接」。",
                 DispatcherPriority.Background);
         }
         else
@@ -832,22 +947,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             StatusDetail = "定时到了，不过当时本来就没连。";
         }
 
-        Log.Info($"定时关闭到点：{(wasConnected ? "已断开连接" : "本来未连接")}");
+        Log.Info($"定时暂停到点：{(wasConnected ? "已断开连接" : "本来未连接")}{(SleepTimerChime ? "，响铃一声" : "")}");
 
-        if (SleepTimerChime) PlayChime();
-    }
-
-    private static void PlayChime()
-    {
-        try
-        {
-            // 跟着系统提示音的方案走，用户把系统静音或换了音效都算他的选择。
-            System.Media.SystemSounds.Asterisk.Play();
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"提示音播放失败: {ex.Message}");
-        }
+        if (SleepTimerChime) Chime.Play();
     }
 
     private async Task PrimaryActionAsync()
@@ -914,9 +1016,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public async Task DisconnectAsync()
+    /// <param name="byUser">
+    /// 是不是用户亲手按的。定时到点也走这条路径（同样要打上「保持断开」的标记），
+    /// 但日志里写成「用户点了断开」会让人以后翻日志时以为是自己点的。
+    /// </param>
+    public async Task DisconnectAsync(bool byUser = true)
     {
-        Log.Info("用户点了断开");
+        Log.Info(byUser ? "用户点了断开" : "程序主动断开（定时到点或唤醒收尾）");
 
         // 先把意图钉死：在途的连接尝试、迟到的掉线回调都作废
         _intentVersion++;

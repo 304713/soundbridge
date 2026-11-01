@@ -207,17 +207,29 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="定时断开" Style="{StaticResource SectionLabel}" VerticalAlignment="Center" />
+                    <TextBlock Text="定时暂停" Style="{StaticResource SectionLabel}" VerticalAlignment="Center" />
                     <ComboBox Grid.Column="1" Width="108" Height="32" Style="{StaticResource DarkComboBox}"
                               ItemsSource="{Binding SleepTimerOptions}"
                               SelectedItem="{Binding SelectedSleepTimer, Mode=TwoWay}">
                         <ComboBox.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding Label}" />
+                                <!-- 「自定义…」排在选项最上面，用主题色标出来，免得又被当成固定时长之一 -->
+                                <TextBlock Text="{Binding Label}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsCustom}" Value="True">
+                                                    <Setter Property="Foreground" Value="{StaticResource AccentHoverBrush}" />
+                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                             </DataTemplate>
                         </ComboBox.ItemTemplate>
                     </ComboBox>
-                    <CheckBox Grid.Column="2" Content="到点响一声" Style="{StaticResource DarkCheckBox}"
+                    <CheckBox Grid.Column="2" Content="铃声提醒" Style="{StaticResource DarkCheckBox}"
                               Margin="14,0,0,0" VerticalAlignment="Center"
                               IsChecked="{Binding SleepTimerChime, Mode=TwoWay}" />
                     <TextBlock Grid.Column="3" Text="{Binding SleepTimerText}" Style="{StaticResource Caption}"

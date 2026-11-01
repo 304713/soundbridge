@@ -1,0 +1,45 @@
+<Window x:Class="SoundBridge.Views.TimerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="声桥 · 自定义定时"
+        Width="392" Height="236"
+        ResizeMode="NoResize"
+        Background="{StaticResource WindowBgBrush}"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        FontFamily="Microsoft YaHei UI, Segoe UI"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+
+    <Grid Margin="22,18,22,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="多久之后暂停？" Style="{StaticResource H1}" />
+        <TextBlock Grid.Row="1" Margin="0,6,0,0" Style="{StaticResource Caption}" FontSize="12"
+                   Text="到点会自动断开连接，手机上的播放器一般会跟着停下。想接着听，点一下「连接」就行。" />
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,16,0,0">
+            <TextBox x:Name="MinutesInput" Style="{StaticResource DarkTextBox}" Width="96"
+                     TextAlignment="Center" MaxLength="3"
+                     TextChanged="OnMinutesChanged" />
+            <TextBlock Text="分钟后暂停" Style="{StaticResource BodyStrong}" FontSize="13"
+                       VerticalAlignment="Center" Margin="10,0,0,0" />
+            <TextBlock x:Name="ErrorText" Style="{StaticResource Caption}" FontSize="11.5"
+                       Foreground="{StaticResource ErrorBrush}"
+                       VerticalAlignment="Center" Margin="12,0,0,0" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="取消" Width="86" Height="34" Style="{StaticResource GhostButton}"
+                    IsCancel="True" />
+            <Button x:Name="OkButton" Content="开始计时" Width="112" Height="34" Margin="10,0,0,0"
+                    Style="{StaticResource ActionButton}" IsDefault="True" Click="OnOkClick" />
+        </StackPanel>
+    </Grid>
+</Window>
