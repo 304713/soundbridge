@@ -23,7 +23,7 @@
 
     <!-- 文字 -->
     <Style x:Key="H1" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="19" />
+        <Setter Property="FontSize" Value="17" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
     </Style>
@@ -40,7 +40,7 @@
     </Style>
 
     <Style x:Key="Caption" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="11.5" />
         <Setter Property="TextWrapping" Value="Wrap" />
         <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
     </Style>
@@ -97,8 +97,8 @@
 
     <!-- 设备列表 -->
     <Style x:Key="DeviceItem" TargetType="ListBoxItem">
-        <Setter Property="Margin" Value="0,0,0,6" />
-        <Setter Property="Padding" Value="12,10" />
+        <Setter Property="Margin" Value="0,0,0,4" />
+        <Setter Property="Padding" Value="10,8" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="FocusVisualStyle" Value="{x:Null}" />
@@ -106,7 +106,7 @@
             <Setter.Value>
                 <ControlTemplate TargetType="ListBoxItem">
                     <Border x:Name="bd" Background="Transparent" BorderBrush="Transparent"
-                            BorderThickness="1" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            BorderThickness="1" CornerRadius="8" Padding="{TemplateBinding Padding}">
                         <ContentPresenter />
                     </Border>
                     <ControlTemplate.Triggers>
@@ -116,6 +116,48 @@
                         <Trigger Property="IsSelected" Value="True">
                             <Setter TargetName="bd" Property="Background" Value="{StaticResource AccentSoftBrush}" />
                             <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 开关：左侧文字，右侧滑动块。比复选框更适合「一直生效的设置」。 -->
+    <Style x:Key="ToggleSwitch" TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="MinHeight" Value="30" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <Grid Background="Transparent" Margin="0,1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ContentPresenter VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <Border x:Name="track" Grid.Column="1" Width="30" Height="16" CornerRadius="8"
+                                Background="{StaticResource BorderStrongBrush}" VerticalAlignment="Center">
+                            <Ellipse x:Name="knob" Width="12" Height="12" Fill="#8A939D"
+                                     HorizontalAlignment="Left" Margin="2,0,0,0" />
+                        </Border>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="track" Property="Background" Value="{StaticResource AccentBrush}" />
+                            <Setter TargetName="knob" Property="HorizontalAlignment" Value="Right" />
+                            <Setter TargetName="knob" Property="Margin" Value="0,0,2,0" />
+                            <Setter TargetName="knob" Property="Fill" Value="White" />
+                            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

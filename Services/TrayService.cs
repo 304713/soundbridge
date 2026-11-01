@@ -55,6 +55,9 @@ public sealed class TrayService : IDisposable
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(MainViewModel.IsConnected)
+            or nameof(MainViewModel.IsReconnecting)
+            or nameof(MainViewModel.IsBusy)
+            or nameof(MainViewModel.SelectedDevice)
             or nameof(MainViewModel.StatusText)
             or nameof(MainViewModel.ActionText)
             or nameof(MainViewModel.SleepTimerTrayText)
@@ -76,8 +79,12 @@ public sealed class TrayService : IDisposable
             _icon = next;
 
             _notifyIcon.Text = Truncate(BuildTooltip(), 63);
-            _toggleItem.Text = _viewModel.IsConnected ? "断开连接" : "连接";
-            _toggleItem.Enabled = _viewModel.IsConnected || _viewModel.SelectedDevice is not null;
+            _toggleItem.Text = _viewModel.IsReconnecting
+                ? "停止重连"
+                : _viewModel.IsConnected ? "断开连接" : "连接";
+            _toggleItem.Enabled = _viewModel.IsReconnecting
+                                  || _viewModel.IsConnected
+                                  || _viewModel.SelectedDevice is not null;
             _autoStartItem.Checked = _viewModel.AutoStart;
         }
         catch (Exception ex)

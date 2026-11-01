@@ -9,7 +9,7 @@ Windows 从 10 2004 起支持蓝牙 A2DP Sink（让电脑当蓝牙音箱），�
 ## 它能做什么
 
 - 列出**已配对且支持音频接收**的手机，一键连接 / 断开
-- **首次启动先讲清「什么情况下用不了」**，之后随时可从界面右下角重新打开
+- **首次启动先讲清「什么情况下用不了」**，之后随时可从界面左下角重新打开
 - 关闭窗口缩到托盘，托盘菜单里也能连
 - 开机自启（托盘启动）、启动即连上次那台手机
 - 断线自动重连，指数退避
@@ -18,6 +18,7 @@ Windows 从 10 2004 起支持蓝牙 A2DP Sink（让电脑当蓝牙音箱），�
 - **连接时把音量压到 80% 以内**。手机一开播就直接出声，音量是上次留下的，很容易轰一下
 - **定时关闭**：选个时长，到点自动断开（多数播放器会跟着停下），可勾选「到点响一声」
 - 深色界面、单实例、日志可查
+- **轻量**：空闲 CPU 0%、私有内存约 73 MB、启动 0.7 秒（实测数据见下）
 
 ## 它不能做什么
 
@@ -40,13 +41,17 @@ Windows 从 10 2004 起支持蓝牙 A2DP Sink（让电脑当蓝牙音箱），�
 
 ## 下载
 
-到 [Releases](https://github.com/304713/soundbridge/releases/latest) 下载 `SoundBridge-1.3.0-win-x64.zip`，解压后双击 `SoundBridge.exe` 即可，免安装、不需要 .NET 运行库。
+到 [Releases](https://github.com/304713/soundbridge/releases/latest) 下载 `SoundBridge-1.5.0-win-x64.zip`，**解压后双击 `SoundBridge.exe`**，免安装、不需要 .NET 运行库。
+
+> 注意：1.5.0 起改成「文件夹 + zip」发布，所以要先把压缩包解开再运行，不能像以前那样从压缩包里直接双击。换来的是私有内存从 153 MB 降到 73 MB、启动快 400 毫秒。
 
 ## 使用
 
 1. 在 Windows「蓝牙和其他设备」里把手机和电脑配对
 2. 打开声桥，选中手机，点「连接」
 3. 手机上播放音频
+
+第一次打开会先弹一页说明，重点只有一条：**确认你的蓝牙适配器支持 A2DP Sink**。列表里能看到手机就是支持，一直是空的就基本是不支持。这一页之后可以从主界面左下角「使用说明」重看。
 
 首次运行会被 SmartScreen 拦一下（未购买代码签名证书），点「更多信息」→「仍要运行」。
 
@@ -57,13 +62,17 @@ dotnet build -c Release
 dotnet run -c Release
 ```
 
-打包成免安装单文件：
+打包成免安装版（文件夹 + zip）：
 
 ```bash
 dotnet publish -c Release -r win-x64 --self-contained true \
-  -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true \
-  -p:IncludeNativeLibrariesForSelfExtract=true -o dist
+  -p:PublishSingleFile=false -p:PublishReadyToRun=false -o dist
+# 然后把 dist 目录整个压成 zip
 ```
+
+**不建议再打成「单文件 + 压缩」**。压缩单文件在运行时要把程序集解压进内存才能加载，实测同样的空窗口：压缩单文件私有内存 110 MB，普通文件夹 57 MB；声桥本体则是 153 MB → 73 MB，启动还快了 400 毫秒。多出来的一个「先解压」步骤，比自己多花 90 MB 内存划算。
+
+`PublishReadyToRun` 也测过：启动再快 60–70 毫秒，包体 +8.6 MB。当前 JIT 只有 4500 个方法、428 KB IL，本来就不是瓶颈，所以没开。老机器反馈启动慢时可以打开。
 
 打包成 MSIX（Microsoft Store 用的格式）见 [`packaging/README.md`](packaging/README.md)。
 
@@ -110,6 +119,8 @@ Resume  → 等 2.5s（适配器重初始化）
 %APPDATA%\SoundBridge\settings.json
 %APPDATA%\SoundBridge\soundbridge.log
 ```
+
+日志里会记设备名称和蓝牙地址，但**地址只保留前 4 位**（形如 `FCD9********`）。你把日志贴到 issue 里求助时，不会顺带暴露手机的完整 MAC。
 
 ## 许可证
 

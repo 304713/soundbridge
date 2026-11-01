@@ -26,7 +26,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private ConnState _state = ConnState.Idle;
     private string _statusText = "未连接";
     private string _statusColorHex = ColorIdle;
-    private string _statusDetail = "选择一台手机，然后点「连接」。";
+    private string _statusDetail = "还没连。选好手机，点下面的「连接」。";
     private bool _hasDevices;
     private bool _initialized;
 
@@ -51,8 +51,38 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     /// <summary>用户在启动自连过程中手动断开，就别再自动连回去了。</summary>
     private bool _userCancelledStartup;
 
+    /// <summary>
+    /// 用户意图版本号。每次主动断开就 +1，所有在途的连接尝试、迟到的掉线回调
+    /// 都要拿自己出发时的版本对一下——对不上就说明用户中途反悔了，立刻收手。
+    /// 少了这一层，「断开」就只是碰运气。
+    /// </summary>
+    private int _intentVersion;
+
+    /// <summary>用户最后一次主动断开的时刻。这段时间内任何「自动重连」都不许开工。</summary>
+    private DateTime _manualDisconnectAt = DateTime.MinValue;
+
+    private static readonly TimeSpan DisconnectGrace = TimeSpan.FromSeconds(90);
+
+    /// <summary>正在自动重连（不是用户按的），界面据此把主按钮换成「停止重连」。</summary>
+    private bool _reconnecting;
+
+    /// <summary>
+    /// 用户明确要求「现在别连」。和 90 秒的冷却不同，这个标记一直有效，
+    /// 直到他自己再点一次「连接」——否则睡一觉醒来又会被自动接回去。
+    /// </summary>
+    private bool _stayDisconnected;
+
     /// <summary>休眠前是否处于已连接状态，唤醒后据此决定要不要恢复。</summary>
     private bool _connectedBeforeSuspend;
+
+    /// <summary>
+    /// 已有的掉线处理是否正在跑。一次掉线会连发好几次 StateChanged，
+    /// 每个回调都开一个重连循环，它们就会互相抢连接——表现是「刚连上又断」。
+    /// </summary>
+    private bool _droppedRunning;
+
+    /// <summary>视图模型已经释放，后台任务不要再往界面上写状态。</summary>
+    private bool _disposed;
 
     /// <summary>唤醒恢复流程正在跑，避免连续几次 Resume 触发重复重连。</summary>
     private bool _resumeInProgress;
@@ -68,7 +98,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
         RefreshCommand = new AsyncRelayCommand(RefreshDevicesAsync);
-        PrimaryCommand = new AsyncRelayCommand(PrimaryActionAsync, () => !IsBusy && (IsConnected || SelectedDevice is not null));
+        PrimaryCommand = new AsyncRelayCommand(PrimaryActionAsync, CanPrimaryAction);
         OpenLogCommand = new RelayCommand(OpenLog);
         OpenPrivacyCommand = new RelayCommand(ShowPrivacy);
         OpenHelpCommand = new RelayCommand(ShowHelp);
@@ -137,17 +167,33 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Log.Info("首次使用说明已阅");
     }
 
+    /// <summary>帮助窗口的当前实例。重复点「使用说明」只把它提到前面，不叠窗。</summary>
+    private WelcomeWindow? _helpWindow;
+
+    /// <summary>隐私窗口的当前实例，同上。</summary>
+    private PrivacyWindow? _privacyWindow;
+
     private void ShowHelp()
     {
         try
         {
+            if (_helpWindow is { IsLoaded: true })
+            {
+                _helpWindow.Activate();
+                return;
+            }
+
             var window = new WelcomeWindow(firstRun: false);
             var owner = System.Windows.Application.Current?.MainWindow;
 
             if (owner is not null && owner.IsVisible && !ReferenceEquals(owner, window))
                 window.Owner = owner;
 
-            window.ShowDialog();
+            // 非模态：说明只是给人看的，用不着把主界面整个禁用掉。
+            // 之前用 ShowDialog，用户在说明窗口开着时点「断开」不会有任何反应。
+            _helpWindow = window;
+            window.Closed += (_, _) => _helpWindow = null;
+            window.Show();
         }
         catch (Exception ex)
         {
@@ -155,7 +201,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public string VersionText => "v1.4.0";
+    public string VersionText => "v1.5.0";
 
     public SinkDevice? SelectedDevice
     {
@@ -178,22 +224,37 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     public bool IsBusy => _state is ConnState.Connecting or ConnState.Disconnecting;
 
-    public string ActionText => _state switch
-    {
-        ConnState.Connecting => "连接中…",
-        ConnState.Connected => "断开",
-        ConnState.Disconnecting => "断开中…",
-        _ => "连接"
-    };
+    /// <summary>自动重连进行中。此时主按钮变成「停止重连」，而不是又摆一个「连接」。</summary>
+    public bool IsReconnecting => _reconnecting;
 
-    public string ActionHint => _state switch
+    private bool CanPrimaryAction()
+        => _reconnecting || (!IsBusy && (IsConnected || SelectedDevice is not null));
+
+    public string ActionText
+        => _reconnecting ? "停止重连" : _state switch
+        {
+            ConnState.Connecting => "连接中",
+            ConnState.Connected => "断开",
+            ConnState.Disconnecting => "断开中",
+            _ => "连接"
+        };
+
+    public string ActionHint
     {
-        ConnState.Connecting => "正在等待手机接受连接，请稍候。",
-        ConnState.Connected => "断开后声音回到手机，电脑这边的播放不受影响。",
-        ConnState.Disconnecting => "正在断开连接…",
-        _ when SelectedDevice is null => "先在上面选一台手机。",
-        _ => $"连接 {SelectedDevice?.Name} 后，手机上播放的音乐、视频、语音都会从电脑出声。"
-    };
+        get
+        {
+            if (_reconnecting) return "正在自己接回去，点这里可以停。";
+
+            return _state switch
+            {
+                ConnState.Connecting => "等手机确认，一般两秒。",
+                ConnState.Connected => "断开后，声音回到手机。",
+                ConnState.Disconnecting => "正在断开…",
+                _ when SelectedDevice is null => "先在左边选一台手机。",
+                _ => "连上后，声音就从电脑出来了。"
+            };
+        }
+    }
 
     public string StatusText
     {
@@ -213,8 +274,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _statusDetail, value);
     }
 
-    public string EmptyHint { get; private set; } =
-        "先在 Windows 的「蓝牙和其他设备」里把手机和电脑配对，再点右上角「刷新设备」。";
+    public string EmptyHint => EmptyHintDetail;
+
+    private const string EmptyHintDetail =
+        "先确认手机已经和这台电脑配对，再点「刷新」。还是空的，多半是电脑的蓝牙不支持接收音频——" +
+        "点左下角「使用说明」，那里写了怎么判断。";
 
     public bool AutoStart
     {
@@ -363,6 +427,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
+        if (_stayDisconnected)
+        {
+            Log.Info("启动自动连接跳过：用户已要求保持断开");
+            return;
+        }
+
         var last = settings.LastDeviceName;
         var device = Devices.FirstOrDefault(d => d.Name == last) ?? Devices[0];
         Log.Info($"启动自动连接: {device.Name}");
@@ -377,10 +447,17 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         while (true)
         {
-            await RefreshDevicesAsync();
+            // 扫描期间只更新设备列表。播放设备下拉框在整轮等待里只填一次：
+            // 没有蓝牙接收能力的机器会在这里空转 40 次，每次都枚举一遍音频端点、
+            // 把下拉框清空重填，纯属白烧 IO，老机器上尤其明显。
+            await RefreshDevicesAsync(refreshOutputs: Outputs.Count == 0);
+
             if (Devices.Count > 0)
             {
                 if (attempt > 0) Log.Info($"蓝牙已就绪，第 {attempt + 1} 次扫描拿到设备");
+
+                // 设备到位后再刷一次输出：睡醒后 USB 声卡的 endpoint 可能整个换掉
+                RefreshOutputs();
                 return;
             }
 
@@ -424,10 +501,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Log.Warn("启动自动连接失败：多次尝试仍未连上，可在界面点「连接」重试");
     }
 
-    public async Task RefreshDevicesAsync()
+    public Task RefreshDevicesAsync() => RefreshDevicesAsync(refreshOutputs: true);
+
+    private async Task RefreshDevicesAsync(bool refreshOutputs)
     {
         var devices = await _deviceService.GetSinkDevicesAsync();
         var selectedId = SelectedDevice?.Id;
+        var countBefore = Devices.Count;
 
         // 差量同步，避免选中项闪烁
         for (var i = Devices.Count - 1; i >= 0; i--)
@@ -443,38 +523,55 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
         HasDevices = Devices.Count > 0;
 
-        if (!HasDevices)
-        {
-            EmptyHint = "先在 Windows 的「蓝牙和其他设备」里把手机和电脑配对，再点右上角「刷新设备」。\n" +
-                        "如果已经配对却看不到，说明这台蓝牙适配器没有开放音频接收能力。";
-        }
-
         var target = selectedId is not null ? Devices.FirstOrDefault(d => d.Id == selectedId) : null;
         SelectedDevice = target ?? Devices.FirstOrDefault();
 
-        RefreshOutputs();
+        if (refreshOutputs) RefreshOutputs();
 
-        Log.Info($"设备列表已更新，共 {Devices.Count} 台");
+        // 手动刷新每次都记，自动轮询只在数量真的变了时记——否则日志里全是同一行
+        if (refreshOutputs || countBefore != Devices.Count)
+            Log.Info($"设备列表已更新，共 {Devices.Count} 台");
     }
 
     /// <summary>刷新可选的播放设备，并保持当前选择。</summary>
     private void RefreshOutputs()
     {
-        var outputs = AudioOutputService.GetOutputs();
+        var fresh = AudioOutputService.GetOutputs();
 
-        Outputs.Clear();
-        foreach (var output in outputs) Outputs.Add(output);
+        // 枚举失败（音频服务还没起来）时保留上一次的结果。
+        // 清空会让下拉框变成空白，用户看到的是「播放设备没了」。
+        if (fresh.Count == 0)
+        {
+            Log.Warn("没有枚举到播放设备，保留上一次的选择");
+            return;
+        }
+
+        // 原地合并，而不是 Clear 后重填：清空会让 ComboBox 的选中项先变成 null，
+        // 双向绑定把这个 null 写回 SelectedOutput，界面就闪一下、甚至停空白。
+        for (var i = Outputs.Count - 1; i >= 0; i--)
+        {
+            if (fresh.All(o => o.Id != Outputs[i].Id)) Outputs.RemoveAt(i);
+        }
+
+        for (var i = 0; i < fresh.Count; i++)
+        {
+            if (Outputs.Any(o => o.Id == fresh[i].Id)) continue;
+            Outputs.Insert(Math.Min(i, Outputs.Count), fresh[i]);
+        }
 
         var savedId = _settingsService.Current.OutputDeviceId;
         var savedName = _settingsService.Current.OutputDeviceName;
 
         // 睡眠唤醒后 USB 声卡会重新枚举，endpoint 的 GUID 可能整个变掉，
         // 只按 ID 找会失配，所以再按名字兜一层。
-        var pick = (savedId is not null ? Outputs.FirstOrDefault(o => o.Id == savedId) : null)
-                   ?? (savedName is not null ? Outputs.FirstOrDefault(o => o.Name == savedName) : null)
-                   ?? Outputs.FirstOrDefault(o => o.IsDefault)
-                   ?? Outputs.FirstOrDefault(o => o.Name.Contains("扬声器") || o.Name.Contains("Speakers", StringComparison.OrdinalIgnoreCase))
-                   ?? Outputs.FirstOrDefault();
+        var want = (savedId is not null ? fresh.FirstOrDefault(o => o.Id == savedId) : null)
+                   ?? (savedName is not null ? fresh.FirstOrDefault(o => o.Name == savedName) : null)
+                   ?? fresh.FirstOrDefault(o => o.IsDefault)
+                   ?? fresh.FirstOrDefault(o => o.Name.Contains("扬声器") || o.Name.Contains("Speakers", StringComparison.OrdinalIgnoreCase))
+                   ?? fresh.FirstOrDefault();
+
+        // 映射回集合里的那个实例，否则 ComboBox 认不出选中项
+        var pick = want is null ? null : Outputs.FirstOrDefault(o => o.Id == want.Id);
 
         // 走了名字兜底说明 ID 变了，把新 ID 记回去，下次就不用再猜
         if (pick is not null && !string.IsNullOrEmpty(savedId) && !string.Equals(pick.Id, savedId, StringComparison.OrdinalIgnoreCase))
@@ -507,14 +604,18 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (AudioOutputService.TrySetDefault(target.Id, out var error))
             {
                 Log.Info($"默认播放设备已切到: {target.Name}");
-                StatusDetail = $"声音正送往：{target.Name}";
             }
             else
             {
                 Log.Warn($"切换声音输出失败: {error}");
-                StatusDetail = $"声音输出切换失败：{error}";
+                StatusDetail = $"没能切到那台设备：{error}";
+                ApplyVolumeLimit(target);
+                return;
             }
         }
+
+        // 这行是界面上唯一的状态补充说明：「已连接」胶囊说不清声音去了哪台设备。
+        StatusDetail = $"出声设备：{target.Name}";
 
         // 即便设备本来就是默认的，音量也照样要压一遍——上次用完留下的音量跟这次无关。
         ApplyVolumeLimit(target);
@@ -563,7 +664,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var left = _sleepDeadline - DateTime.Now;
         if (left <= TimeSpan.Zero)
         {
-            _ = FireSleepTimerAsync();
+            _ = GuardAsync(FireSleepTimerAsync, "定时断开");
             return;
         }
 
@@ -623,12 +724,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             // 断开时服务层还会回抛一次状态事件，排队排在前面；
             // 用 Background 优先级落到队列末尾，才能把提示文字换成我们这句。
             _ = _dispatcher.InvokeAsync(
-                () => StatusDetail = "定时关闭已执行。想继续听，点一下「连接」",
+                () => StatusDetail = "定时到了，已断开。想接着听，点「连接」。",
                 DispatcherPriority.Background);
         }
         else
         {
-            StatusDetail = "定时到点，但当时并没有连着手机";
+            StatusDetail = "定时到了，不过当时本来就没连。";
         }
 
         Log.Info($"定时关闭到点：{(wasConnected ? "已断开连接" : "本来未连接")}");
@@ -651,6 +752,12 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private async Task PrimaryActionAsync()
     {
+        if (_reconnecting)
+        {
+            await StopReconnectingAsync();
+            return;
+        }
+
         if (IsConnected)
         {
             await DisconnectAsync();
@@ -661,10 +768,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         await ConnectAsync(SelectedDevice);
     }
 
+    /// <summary>重连途中按了按钮：停下，并且保证不会再自己爬起来。</summary>
+    private async Task StopReconnectingAsync()
+    {
+        Log.Info("用户中止自动重连");
+
+        _intentVersion++;
+        _manualDisconnectAt = DateTime.UtcNow;
+        _stayDisconnected = true;
+        SetReconnecting(false);
+        CancelRetry();
+
+        // 可能刚有一条连接在收尾，一并掐掉
+        await _connection.DisconnectAsync(silent: true);
+        ApplyState(ConnState.Idle, "未连接", "已停止重连。点「连接」可以再试。");
+    }
+
     public async Task ConnectAsync(SinkDevice device)
     {
+        // 出发时先记一笔：等这次连完，如果版本变了，说明用户中途按了断开。
+        var version = _intentVersion;
+
         CancelRetry();
+        SetReconnecting(false);
         _retryAttempt = 0;
+        _stayDisconnected = false;
         SelectedDevice = device;
 
         // 手动连接等于重新表态：之前那次「用户主动断开」的标记要清掉，
@@ -675,14 +803,42 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _settingsService.Save();
 
         await _connection.ConnectAsync(device.Id);
+
+        if (version != _intentVersion)
+        {
+            // 连接刚好在用户按下「断开」之后才成功——这条连接不算数，立刻关掉，
+            // 否则手机会莫名其妙又连回来，用户只会觉得「点了没用」。
+            Log.Info("连接完成时用户已经要求断开，撤销这次连接");
+            await _connection.DisconnectAsync(silent: true);
+            ApplyState(ConnState.Idle, "未连接", "已断开。声音回到手机外放。");
+        }
     }
 
     public async Task DisconnectAsync()
     {
+        Log.Info("用户点了断开");
+
+        // 先把意图钉死：在途的连接尝试、迟到的掉线回调都作废
+        _intentVersion++;
+        _manualDisconnectAt = DateTime.UtcNow;
         _userCancelledStartup = true;
+        _stayDisconnected = true;
+        SetReconnecting(false);
         CancelRetry();
+
         await _connection.DisconnectAsync();
-        ApplyState(ConnState.Idle, "未连接", "已断开，手机的声音回到手机");
+        ApplyState(ConnState.Idle, "未连接", "已断开。声音回到手机外放。");
+    }
+
+    private void SetReconnecting(bool value)
+    {
+        if (_reconnecting == value) return;
+
+        _reconnecting = value;
+        OnPropertyChanged(nameof(IsReconnecting));
+        OnPropertyChanged(nameof(ActionText));
+        OnPropertyChanged(nameof(ActionHint));
+        PrimaryCommand.RaiseCanExecuteChanged();
     }
 
     private void OnConnectionStateChanged(object? sender, ConnectionStateEventArgs e)
@@ -692,32 +848,79 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void OnDroppedUnexpectedly(object? sender, string deviceId)
     {
-        _dispatcher.InvokeAsync(() => _ = HandleDroppedAsync());
+        _dispatcher.InvokeAsync(() => _ = GuardAsync(HandleDroppedAsync, "掉线重连"));
     }
 
     private async Task HandleDroppedAsync()
     {
-        ApplyState(ConnState.Idle, "未连接", "连接已断开");
+        // 一次掉线会连发好几次 StateChanged。每个回调都开一个重连循环的话，
+        // 它们会互相抢连接，表现就是「刚连上又断、断了又连」的抖动。
+        if (_droppedRunning)
+        {
+            Log.Info("已有掉线处理在进行，忽略这次重复回调");
+            return;
+        }
 
-        if (!AutoReconnect || SelectedDevice is null) return;
-
-        CancelRetry();
-        _retryCts = new CancellationTokenSource();
-        var token = _retryCts.Token;
-
-        int[] delays = { 800, 1600, 3000, 5000, 8000, 12000, 15000 };
+        _droppedRunning = true;
 
         try
         {
+            // 用户刚按过「断开」，这就是他要的结果。迟到的掉线回调不许把它连回来。
+            if (DateTime.UtcNow - _manualDisconnectAt < DisconnectGrace)
+            {
+                Log.Info("掉线回调发生在用户断开之后，忽略");
+                ApplyState(ConnState.Idle, "未连接", "已断开。声音回到手机外放。");
+                return;
+            }
+
+            ApplyState(ConnState.Idle, "未连接", "连接断了");
+
+            var device = SelectedDevice;
+            if (!AutoReconnect || device is null)
+            {
+                SetDisconnectedHint();
+                return;
+            }
+
+            var version = _intentVersion;
+            CancelRetry();
+            _retryCts = new CancellationTokenSource();
+            var token = _retryCts.Token;
+
+            // 先让蓝牙栈把链路收拾一下，顺便看看手机还在不在。
+            await Task.Delay(1200, token);
+            if (token.IsCancellationRequested || version != _intentVersion) return;
+
+            var linkUp = await _deviceService.IsLinkConnectedAsync(device.Id);
+            if (linkUp == false)
+            {
+                // 链路本身没了：手机走远、蓝牙关了，或者在别处把连接断了。
+                // 这时候硬连只会变成跟用户拔河，而且对方根本收不到。
+                Log.Info("掉线后蓝牙链路已不在，放弃自动重连");
+                ApplyState(ConnState.Idle, "未连接",
+                    "手机那边断开了，没有自动重连。手机靠近后点「连接」即可。");
+                return;
+            }
+
+            SetReconnecting(true);
+
+            int[] delays = { 800, 1600, 3000, 5000, 8000, 12000 };
+
             foreach (var delay in delays)
             {
                 await Task.Delay(delay, token);
-                if (token.IsCancellationRequested || _connection.State == ConnState.Connected) return;
+                if (token.IsCancellationRequested || version != _intentVersion) return;
 
                 _retryAttempt++;
-                StatusDetail = $"连接已断开，正在自动重连（第 {_retryAttempt} 次）…";
+                StatusDetail = $"断线了，正在自己接回去（第 {_retryAttempt} 次）…";
 
-                await _connection.ConnectAsync(SelectedDevice.Id);
+                await _connection.ConnectAsync(device.Id);
+
+                if (version != _intentVersion)
+                {
+                    await _connection.DisconnectAsync(silent: true);
+                    return;
+                }
 
                 if (_connection.State == ConnState.Connected)
                 {
@@ -726,16 +929,31 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                 }
             }
 
-            ApplyState(ConnState.Error, "自动重连失败", "点「连接」再试一次，或确认手机还在电脑附近。");
+            ApplyState(ConnState.Error, "重连失败", "自己没接上，点「连接」再试一次。");
         }
         catch (TaskCanceledException)
         {
             // 用户主动中断
         }
+        catch (Exception ex)
+        {
+            Log.Error("掉线重连出错", ex);
+            ApplyState(ConnState.Error, "未连接", "重连时出了点问题，点「连接」再试一次。");
+        }
         finally
         {
+            _droppedRunning = false;
             _retryAttempt = 0;
+            SetReconnecting(false);
         }
+    }
+
+    private void SetDisconnectedHint()
+    {
+        if (DateTime.UtcNow - _manualDisconnectAt < DisconnectGrace)
+            StatusDetail = "已断开。声音回到手机外放。";
+        else
+            StatusDetail = "连接断了。点「连接」可以再连。";
     }
 
     /// <summary>
@@ -756,7 +974,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (e.Mode != PowerModes.Resume) return;
 
         Log.Info($"系统已唤醒（睡眠前 {(_connectedBeforeSuspend ? "已连接" : "未连接")}）");
-        _dispatcher.InvokeAsync(() => _ = HandleResumeAsync());
+        _dispatcher.InvokeAsync(() => _ = GuardAsync(HandleResumeAsync, "唤醒恢复"));
     }
 
     private async Task HandleResumeAsync()
@@ -778,11 +996,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             // 丢掉那张作废的「连接凭证」
             await _connection.DisconnectAsync(silent: true);
-            ApplyState(ConnState.Idle, "未连接", "系统已唤醒，正在恢复蓝牙连接…");
+            ApplyState(ConnState.Idle, "未连接", "系统醒了，正在把蓝牙找回来…");
 
-            // 睡前连着，醒来就必须接回去；睡前没连，但开了自动重连且有上次的设备，也试一次
-            var shouldReconnect = wasConnected
-                                  || (AutoReconnect && !string.IsNullOrEmpty(_settingsService.Current.LastDeviceName));
+            // 睡前连着，醒来就必须接回去；睡前没连，但开了自动重连且有上次的设备，也试一次。
+            // 唯独用户明确点过「断开」的不算——那是他的选择，不能睡一觉就给推翻了。
+            var shouldReconnect = !_stayDisconnected
+                                  && (wasConnected
+                                      || (AutoReconnect && !string.IsNullOrEmpty(_settingsService.Current.LastDeviceName)));
 
             if (!shouldReconnect)
             {
@@ -798,7 +1018,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
             if (Devices.Count == 0)
             {
-                ApplyState(ConnState.Error, "未连接", "唤醒后没有扫描到手机，请确认手机蓝牙已打开，然后点「刷新设备」。");
+                ApplyState(ConnState.Error, "未连接", "没找到手机。确认它的蓝牙开着，然后点「刷新」。");
                 Log.Warn("唤醒后恢复失败：没有可用设备");
                 return;
             }
@@ -807,7 +1027,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
                          ?? SelectedDevice
                          ?? Devices[0];
 
-            StatusDetail = $"系统已唤醒，正在重新连接 {target.Name}…";
+            StatusDetail = $"已从睡眠唤醒，正在接回 {target.Name}…";
             Log.Info($"唤醒后重新连接: {target.Name}");
 
             await ConnectWithRetryAsync(target);
@@ -815,14 +1035,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             if (_connection.State != ConnState.Connected)
             {
                 // 重连窗口用尽了：别停在「已连接」的假象上，交给用户一键重试
-                ApplyState(ConnState.Error, "未连接", "唤醒后没能自动接上，点「连接」再试一次。");
+                ApplyState(ConnState.Error, "未连接", "唤醒后没能自己接上，点「连接」试一次。");
                 Log.Warn("唤醒后重连失败");
             }
         }
         catch (Exception ex)
         {
             Log.Error("唤醒后恢复连接出错", ex);
-            ApplyState(ConnState.Error, "未连接", "唤醒后恢复失败，点「连接」再试一次。");
+            ApplyState(ConnState.Error, "未连接", "唤醒后没接上，点「连接」试一次。");
         }
         finally
         {
@@ -832,6 +1052,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void ApplyState(ConnState state, string statusText, string? detail)
     {
+        // 退出过程中后台任务可能还在收尾，这时候别再去动已经拆掉的界面
+        if (_disposed) return;
+
         _state = state;
         StatusText = statusText;
         StatusColorHex = state switch
@@ -858,6 +1081,22 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ActionHint));
         PrimaryCommand.RaiseCanExecuteChanged();
         RefreshCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// 后台任务不能把异常丢给空气。没人弹窗、没人记录，用户只会觉得「这功能没反应」，
+    /// 而日志里一片安静——最难查的就是这种。
+    /// </summary>
+    private static async Task GuardAsync(Func<Task> action, string what)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"{what}失败", ex);
+        }
     }
 
     private void CancelRetry()
@@ -892,18 +1131,32 @@ public sealed class MainViewModel : ObservableObject, IDisposable
 
     private void ShowPrivacy()
     {
-        System.Windows.MessageBox.Show(
-            "声桥只做一件事：调用 Windows 自带的蓝牙音频接收接口，把手机正在播放的声音转到电脑上播放。\n\n" +
-            "· 不录音，不保存任何音频内容\n" +
-            "· 不联网，不上传任何数据\n" +
-            "· 本机只保存一个设置文件和一个日志文件，位置在 %APPDATA%\\SoundBridge\n",
-            "隐私说明",
-            System.Windows.MessageBoxButton.OK,
-            System.Windows.MessageBoxImage.Information);
+        try
+        {
+            if (_privacyWindow is { IsLoaded: true })
+            {
+                _privacyWindow.Activate();
+                return;
+            }
+
+            var window = new PrivacyWindow();
+            var owner = System.Windows.Application.Current?.MainWindow;
+
+            if (owner is not null && owner.IsVisible) window.Owner = owner;
+
+            _privacyWindow = window;
+            window.Closed += (_, _) => _privacyWindow = null;
+            window.Show();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("打开隐私说明失败", ex);
+        }
     }
 
     public void Dispose()
     {
+        _disposed = true;
         CancelRetry();
         _sleepTimer.Stop();
         _sleepTimer.Tick -= OnSleepTimerTick;

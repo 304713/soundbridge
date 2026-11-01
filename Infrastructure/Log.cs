@@ -23,6 +23,20 @@ public static class Log
 {
     private static readonly object Gate = new();
 
+    /// <summary>
+    /// 抹掉设备 Id 里的蓝牙地址。Id 形如 <c>...&amp;0&amp;FCD90896116C_C00000000#</c>，
+    /// 中间那 12 位十六进制就是手机的 MAC。日志是给人贴到 issue 里求助的，
+    /// 既帮不上排查，又能定位到具体某台手机，所以只留前 4 位。
+    /// </summary>
+    public static string MaskId(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return "(空)";
+
+        return System.Text.RegularExpressions.Regex.Replace(
+            id, "(?<=&)[0-9A-Fa-f]{12}(?=_)",
+            m => m.Value[..4] + "********");
+    }
+
     public static void Info(string message) => Write("INFO", message);
 
     public static void Warn(string message) => Write("WARN", message);

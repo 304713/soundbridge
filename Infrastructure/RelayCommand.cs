@@ -53,6 +53,12 @@ public sealed class AsyncRelayCommand : ICommand
         {
             await _execute();
         }
+        catch (Exception ex)
+        {
+            // async void 抛出的异常会直接打到 UI 线程，被全局处理器接住后就是
+            // 「界面还在、但什么也没发生」。这里记下来，排查时至少有条线索。
+            Log.Error("命令执行失败", ex);
+        }
         finally
         {
             _running = false;

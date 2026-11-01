@@ -10,6 +10,13 @@ public partial class WelcomeWindow : Window
         InitializeComponent();
 
         WindowChromeHelper.ApplyDarkTitleBar(this);
+        WindowChromeHelper.ApplyAppIcon(this);
+
+        // 1366×768 的笔记本：任务栏占掉一截后放不下 700 高，
+        // 底部按钮会被挤到屏幕外，用户只能按 Alt+F4。这里按工作区收一下。
+        var area = SystemParameters.WorkArea;
+        Width = Math.Min(Width, area.Width - 60);
+        Height = Math.Min(Height, area.Height - 60);
 
         if (!firstRun)
         {

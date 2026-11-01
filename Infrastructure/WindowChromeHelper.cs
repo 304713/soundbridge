@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media.Imaging;
 
 namespace SoundBridge.Infrastructure;
 
@@ -29,6 +30,26 @@ internal static class WindowChromeHelper
     public static void ApplyDarkTitleBar(Window window)
     {
         window.SourceInitialized += (_, _) => Apply(window);
+    }
+
+    /// <summary>
+    /// 给窗口装品牌图标。不设的话，标题栏左上角是 WPF 的空白默认图标，
+    /// 主窗口有图标、说明窗口没有，一眼就能看出是「临时窗口」。
+    /// </summary>
+    public static void ApplyAppIcon(Window window)
+    {
+        if (window.Icon is not null) return;
+
+        try
+        {
+            using var icon = AppIconFactory.CreateAppIcon(64);
+            window.Icon = Imaging.CreateBitmapSourceFromHIcon(
+                icon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"设置窗口图标失败: {ex.Message}");
+        }
     }
 
     private static void Apply(Window window)
