@@ -108,6 +108,102 @@ public static class AudioOutputService
         }
     }
 
+    /// <summary>读某台播放设备的当前音量（0~1）。</summary>
+    public static bool TryGetVolume(string deviceId, out float scalar, out string error)
+    {
+        var value = 0f;
+        var ok = WithVolume(deviceId,
+            v => v.GetMasterVolumeLevelScalar(out value),
+            out error);
+        scalar = value;
+        return ok;
+    }
+
+    /// <summary>直接设置音量（0~1）。只在明确需要时用，平时走 TryCapVolume。</summary>
+    public static bool TrySetVolume(string deviceId, float scalar, out string error)
+    {
+        var level = Math.Clamp(scalar, 0f, 1f);
+        return WithVolume(deviceId, v =>
+        {
+            var context = Guid.Empty;
+            return v.SetMasterVolumeLevelScalar(level, ref context);
+        }, out error);
+    }
+
+    /// <summary>
+    /// 把指定设备的音量压到上限以内。已经低于上限就不动，避免无谓干扰。
+    /// 返回 true 表示确实调低了；before 是调整前的音量（0~1）。
+    /// </summary>
+    public static bool TryCapVolume(string deviceId, int capPercent, out double before, out string error)
+    {
+        before = 0;
+        error = string.Empty;
+
+        var cap = Math.Clamp(capPercent, 1, 100) / 100f;
+
+        if (!TryGetVolume(deviceId, out var current, out error)) return false;
+
+        before = current;
+        if (current <= cap + 0.0001f) return false;   // 没超上限，不折腾
+
+        if (!TrySetVolume(deviceId, cap, out error))
+        {
+            error = string.IsNullOrEmpty(error) ? "设置音量失败" : error;
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>打开设备的音量接口执行一个操作，返回 HRESULT == 0 是否成立。</summary>
+    private static bool WithVolume(string deviceId, Func<IAudioEndpointVolume, int> action, out string error)
+    {
+        error = string.Empty;
+        const int ClsCtxAll = 23;
+
+        IMMDeviceEnumerator? enumerator = null;
+        IMMDevice? device = null;
+        object? activated = null;
+
+        try
+        {
+            enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+            if (enumerator.GetDevice(deviceId, out device) != 0 || device is null)
+            {
+                error = "找不到该播放设备";
+                return false;
+            }
+
+            var iid = typeof(IAudioEndpointVolume).GUID;
+            if (device.Activate(ref iid, ClsCtxAll, IntPtr.Zero, out activated) != 0 || activated is null)
+            {
+                error = "无法访问该设备的音量控制";
+                return false;
+            }
+
+            var volume = (IAudioEndpointVolume)activated;
+            if (action(volume) != 0)
+            {
+                error = "音量操作失败";
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            Log.Error("音量操作异常", ex);
+            return false;
+        }
+        finally
+        {
+            if (activated is not null && Marshal.IsComObject(activated)) Marshal.ReleaseComObject(activated);
+            if (device is not null) Marshal.ReleaseComObject(device);
+            if (enumerator is not null) Marshal.ReleaseComObject(enumerator);
+        }
+    }
+
     private static string? ReadFriendlyName(IPropertyStore store)
     {
         var key = new PROPERTYKEY
@@ -179,6 +275,32 @@ internal interface IPolicyConfig
     int SetPropertyValue([MarshalAs(UnmanagedType.LPWStr)] string deviceId, ref PROPERTYKEY key, ref PROPVARIANT value);
     int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string deviceId, int role);
     int SetEndpointVisibility([MarshalAs(UnmanagedType.LPWStr)] string deviceId, bool visible);
+}
+
+/// <summary>
+/// 设备音量控制。方法顺序必须与 vtable 一致——COM 按序号调用，漏一个就会调错函数。
+/// </summary>
+[ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioEndpointVolume
+{
+    int RegisterControlChangeNotify(IntPtr notify);
+    int UnregisterControlChangeNotify(IntPtr notify);
+    int GetChannelCount(out uint count);
+    int SetMasterVolumeLevel(float level, ref Guid context);
+    int SetMasterVolumeLevelScalar(float level, ref Guid context);
+    int GetMasterVolumeLevel(out float level);
+    int GetMasterVolumeLevelScalar(out float level);
+    int SetChannelVolumeLevel(uint channel, float level, ref Guid context);
+    int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid context);
+    int GetChannelVolumeLevel(uint channel, out float level);
+    int GetChannelVolumeLevelScalar(uint channel, out float level);
+    int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid context);
+    int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+    int GetVolumeStepInfo(out uint step, out uint stepCount);
+    int VolumeStepUp(ref Guid context);
+    int VolumeStepDown(ref Guid context);
+    int QueryHardwareSupport(out uint mask);
+    int GetVolumeRange(out float min, out float max, out float increment);
 }
 
 [StructLayout(LayoutKind.Sequential)]

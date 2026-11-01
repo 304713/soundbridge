@@ -34,6 +34,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private bool _minimizeToTray = true;
     private bool _autoReconnect = true;
     private bool _autoConnectOnStart;
+    private bool _limitVolume = true;
+
+    private readonly DispatcherTimer _sleepTimer;
+    private SleepTimerOption _selectedSleepTimer = SleepTimerOption.Off;
+    private bool _sleepTimerChime;
+
+    /// <summary>到点时刻。用绝对时间而不是自减计数，机器睡过去再醒来也不会算错。</summary>
+    private DateTime _sleepDeadline;
+    private string _sleepTimerText = string.Empty;
+    private string _sleepTimerTrayText = string.Empty;
 
     private CancellationTokenSource? _retryCts;
     private int _retryAttempt;
@@ -66,6 +76,23 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         // 设置在这里就读进来，而不是等 InitializeAsync：
         // 首次引导的判断要赶在窗口显示时发生，那时初始化还没跑完。
         _settingsService.Load();
+
+        SleepTimerOptions = new ObservableCollection<SleepTimerOption>
+        {
+            SleepTimerOption.Off,
+            new() { Minutes = 15, Label = "15 分钟" },
+            new() { Minutes = 30, Label = "30 分钟" },
+            new() { Minutes = 45, Label = "45 分钟" },
+            new() { Minutes = 60, Label = "1 小时" },
+            new() { Minutes = 90, Label = "1 小时 30 分" },
+            new() { Minutes = 120, Label = "2 小时" }
+        };
+
+        _sleepTimer = new DispatcherTimer(DispatcherPriority.Normal, _dispatcher)
+        {
+            Interval = TimeSpan.FromSeconds(1)
+        };
+        _sleepTimer.Tick += OnSleepTimerTick;
     }
 
     public ObservableCollection<SinkDevice> Devices { get; } = new();
@@ -128,7 +155,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public string VersionText => "v1.3.0";
+    public string VersionText => "v1.4.0";
 
     public SinkDevice? SelectedDevice
     {
@@ -234,6 +261,65 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>
+    /// 连接时把系统音量压到上限以内。
+    /// 手机那头一旦开始播放就直接出声，音量是上次留下的，很容易轰一下。
+    /// 这是安全措施，不是体验功能，所以默认开。
+    /// </summary>
+    public bool LimitVolume
+    {
+        get => _limitVolume;
+        set
+        {
+            if (!SetProperty(ref _limitVolume, value)) return;
+            _settingsService.Current.VolumeLimitEnabled = value;
+            _settingsService.Save();
+        }
+    }
+
+    public ObservableCollection<SleepTimerOption> SleepTimerOptions { get; }
+
+    /// <summary>
+    /// 定时关闭。选一个时长就开始倒数，到点断开连接——手机那边的播放器
+    /// 大多会跟着停下，这比在手机上翻出来点暂停可靠得多。
+    /// </summary>
+    public SleepTimerOption SelectedSleepTimer
+    {
+        get => _selectedSleepTimer;
+        set
+        {
+            if (value is null || !SetProperty(ref _selectedSleepTimer, value)) return;
+
+            if (value.Minutes <= 0)
+            {
+                StopSleepTimer();
+            }
+            else
+            {
+                StartSleepTimer(value.Minutes);
+            }
+        }
+    }
+
+    public bool SleepTimerChime
+    {
+        get => _sleepTimerChime;
+        set
+        {
+            if (!SetProperty(ref _sleepTimerChime, value)) return;
+            _settingsService.Current.SleepTimerChime = value;
+            _settingsService.Save();
+        }
+    }
+
+    /// <summary>界面上的倒计时，形如「12:34 后断开」；未启用时为空。</summary>
+    public string SleepTimerText => _sleepTimerText;
+
+    /// <summary>托盘提示用的粗粒度倒计时，一分钟才变一次，免得每秒都去改托盘文字。</summary>
+    public string SleepTimerTrayText => _sleepTimerTrayText;
+
+    public bool IsSleepTimerRunning => _sleepTimerText.Length > 0;
+
     public async Task InitializeAsync()
     {
         if (_initialized) return;
@@ -250,10 +336,14 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         _minimizeToTray = settings.MinimizeToTray;
         _autoReconnect = settings.AutoReconnect;
         _autoConnectOnStart = settings.AutoConnectOnStart;
+        _limitVolume = settings.VolumeLimitEnabled;
+        _sleepTimerChime = settings.SleepTimerChime;
         OnPropertyChanged(nameof(AutoStart));
         OnPropertyChanged(nameof(MinimizeToTray));
         OnPropertyChanged(nameof(AutoReconnect));
         OnPropertyChanged(nameof(AutoConnectOnStart));
+        OnPropertyChanged(nameof(LimitVolume));
+        OnPropertyChanged(nameof(SleepTimerChime));
 
         Log.Info(PackageIdentity.IsPackaged ? "应用启动（打包/商店版）" : "应用启动（免安装版）");
 
@@ -409,21 +499,153 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (target is null) return;
 
         var current = AudioOutputService.GetOutputs().FirstOrDefault(o => o.IsDefault);
-        if (current is not null &&
-            string.Equals(current.Id, target.Id, StringComparison.OrdinalIgnoreCase))
+        var alreadyDefault = current is not null &&
+                             string.Equals(current.Id, target.Id, StringComparison.OrdinalIgnoreCase);
+
+        if (!alreadyDefault)
         {
-            return;   // 已经是目标设备，不折腾系统
+            if (AudioOutputService.TrySetDefault(target.Id, out var error))
+            {
+                Log.Info($"默认播放设备已切到: {target.Name}");
+                StatusDetail = $"声音正送往：{target.Name}";
+            }
+            else
+            {
+                Log.Warn($"切换声音输出失败: {error}");
+                StatusDetail = $"声音输出切换失败：{error}";
+            }
         }
 
-        if (AudioOutputService.TrySetDefault(target.Id, out var error))
+        // 即便设备本来就是默认的，音量也照样要压一遍——上次用完留下的音量跟这次无关。
+        ApplyVolumeLimit(target);
+    }
+
+    /// <summary>把设备音量压到上限以内。已经比上限低就不动。</summary>
+    private void ApplyVolumeLimit(AudioOutput target)
+    {
+        if (!LimitVolume) return;
+
+        var cap = _settingsService.Current.VolumeCapPercent;
+        if (cap <= 0) return;
+
+        if (AudioOutputService.TryCapVolume(target.Id, cap, out var before, out var error))
         {
-            Log.Info($"默认播放设备已切到: {target.Name}");
-            StatusDetail = $"声音正送往：{target.Name}";
+            Log.Info($"音量 {before * 100:F0}% 超过上限，已调到 {cap}%（{target.Name}）");
+        }
+        else if (!string.IsNullOrEmpty(error))
+        {
+            Log.Warn($"限制音量失败: {error}");
+        }
+    }
+
+    private void StartSleepTimer(int minutes)
+    {
+        _sleepDeadline = DateTime.Now.AddMinutes(minutes);
+        _sleepTimer.Start();
+        UpdateSleepTimerText();
+        Log.Info($"定时关闭已设定：{minutes} 分钟后断开");
+    }
+
+    private void StopSleepTimer()
+    {
+        if (_sleepTimer.IsEnabled)
+        {
+            _sleepTimer.Stop();
+            Log.Info("定时关闭已取消");
+        }
+
+        _sleepDeadline = default;
+        SetSleepTimerText(string.Empty, string.Empty);
+    }
+
+    private void OnSleepTimerTick(object? sender, EventArgs e)
+    {
+        var left = _sleepDeadline - DateTime.Now;
+        if (left <= TimeSpan.Zero)
+        {
+            _ = FireSleepTimerAsync();
+            return;
+        }
+
+        UpdateSleepTimerText();
+    }
+
+    private void UpdateSleepTimerText()
+    {
+        var left = _sleepDeadline - DateTime.Now;
+        if (left < TimeSpan.Zero) left = TimeSpan.Zero;
+
+        var mmss = $"{(int)left.TotalMinutes:00}:{left.Seconds:00}";
+        var minutesLeft = (int)Math.Ceiling(left.TotalMinutes);
+
+        SetSleepTimerText(
+            $"{mmss} 后断开",
+            minutesLeft <= 1 ? "即将断开" : $"{minutesLeft} 分钟后断开");
+    }
+
+    private void SetSleepTimerText(string window, string tray)
+    {
+        if (_sleepTimerText != window)
+        {
+            _sleepTimerText = window;
+            OnPropertyChanged(nameof(SleepTimerText));
+            OnPropertyChanged(nameof(IsSleepTimerRunning));
+        }
+
+        if (_sleepTimerTrayText != tray)
+        {
+            _sleepTimerTrayText = tray;
+            OnPropertyChanged(nameof(SleepTimerTrayText));
+        }
+    }
+
+    private async Task FireSleepTimerAsync()
+    {
+        _sleepTimer.Stop();
+        _sleepDeadline = default;
+
+        // 下拉框要回到「关闭」：停在旧时长上会让人以为下一次还会自动倒数。
+        if (_selectedSleepTimer.Minutes > 0)
+        {
+            _selectedSleepTimer = SleepTimerOptions[0];
+            OnPropertyChanged(nameof(SelectedSleepTimer));
+        }
+
+        SetSleepTimerText(string.Empty, string.Empty);
+
+        var wasConnected = IsConnected;
+        if (wasConnected)
+        {
+            // DisconnectAsync 会顺手打上「用户主动断开」的标记，
+            // 否则「断线自动重连」会马上把它接回来，定时就成了摆设。
+            await DisconnectAsync();
+
+            // 断开时服务层还会回抛一次状态事件，排队排在前面；
+            // 用 Background 优先级落到队列末尾，才能把提示文字换成我们这句。
+            _ = _dispatcher.InvokeAsync(
+                () => StatusDetail = "定时关闭已执行。想继续听，点一下「连接」",
+                DispatcherPriority.Background);
         }
         else
         {
-            Log.Warn($"切换声音输出失败: {error}");
-            StatusDetail = $"声音输出切换失败：{error}";
+            StatusDetail = "定时到点，但当时并没有连着手机";
+        }
+
+        Log.Info($"定时关闭到点：{(wasConnected ? "已断开连接" : "本来未连接")}");
+
+        if (SleepTimerChime) PlayChime();
+    }
+
+    private static void PlayChime()
+    {
+        try
+        {
+            // 跟着系统提示音的方案走，用户把系统静音或换了音效都算他的选择。
+            System.Media.SystemSounds.Asterisk.Play();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"提示音播放失败: {ex.Message}");
         }
     }
 
@@ -683,6 +905,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         CancelRetry();
+        _sleepTimer.Stop();
+        _sleepTimer.Tick -= OnSleepTimerTick;
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _connection.StateChanged -= OnConnectionStateChanged;
         _connection.DroppedUnexpectedly -= OnDroppedUnexpectedly;

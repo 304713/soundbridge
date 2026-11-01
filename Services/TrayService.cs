@@ -57,6 +57,7 @@ public sealed class TrayService : IDisposable
         if (e.PropertyName is nameof(MainViewModel.IsConnected)
             or nameof(MainViewModel.StatusText)
             or nameof(MainViewModel.ActionText)
+            or nameof(MainViewModel.SleepTimerTrayText)
             or nameof(MainViewModel.AutoStart))
         {
             UpdateVisual();
@@ -74,7 +75,7 @@ public sealed class TrayService : IDisposable
             _icon?.Dispose();
             _icon = next;
 
-            _notifyIcon.Text = Truncate($"声桥 · {_viewModel.StatusText}", 63);
+            _notifyIcon.Text = Truncate(BuildTooltip(), 63);
             _toggleItem.Text = _viewModel.IsConnected ? "断开连接" : "连接";
             _toggleItem.Enabled = _viewModel.IsConnected || _viewModel.SelectedDevice is not null;
             _autoStartItem.Checked = _viewModel.AutoStart;
@@ -83,6 +84,15 @@ public sealed class TrayService : IDisposable
         {
             Log.Error("更新托盘状态失败", ex);
         }
+    }
+
+    /// <summary>托盘提示：连接状态后面挂上定时关闭的剩余时间，缩到托盘时也能看见。</summary>
+    private string BuildTooltip()
+    {
+        var timer = _viewModel.SleepTimerTrayText;
+        return timer.Length == 0
+            ? $"声桥 · {_viewModel.StatusText}"
+            : $"声桥 · {_viewModel.StatusText} · {timer}";
     }
 
     private static string Truncate(string text, int max) => text.Length <= max ? text : text[..max];

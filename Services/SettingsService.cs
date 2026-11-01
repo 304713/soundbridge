@@ -18,6 +18,18 @@ public sealed class AppSettings
     /// <summary>用户指定的播放设备 ID；null 表示不干预系统默认设置。</summary>
     public string? OutputDeviceId { get; set; }
     public string? OutputDeviceName { get; set; }
+
+    /// <summary>连接时把系统音量压到上限以内。默认开启，属于安全措施而非体验功能。</summary>
+    public bool VolumeLimitEnabled { get; set; } = true;
+
+    /// <summary>音量上限（百分比）。</summary>
+    public int VolumeCapPercent { get; set; } = 80;
+
+    /// <summary>
+    /// 定时关闭到点后是否响一声。默认关：这个功能多半是在睡前用的，
+    /// 半夜突然来一声音效只会把人吵醒。
+    /// </summary>
+    public bool SleepTimerChime { get; set; }
 }
 
 public sealed class SettingsService
