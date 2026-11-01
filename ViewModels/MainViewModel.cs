@@ -967,7 +967,38 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
 
         if (SelectedDevice is null) return;
+
+        // 蓝牙关着时下面一定会拿到「系统拒绝了」——那句话会把人引向「是不是手机连着耳机」，
+        // 而真正的原因只是电脑的蓝牙开关没开。这一步只查状态，不碰连接。
+        var blocked = await DescribeBluetoothUnavailableAsync();
+        if (blocked is not null)
+        {
+            ApplyState(ConnState.Idle, "未连接", blocked);
+            return;
+        }
+
         await ConnectAsync(SelectedDevice);
+    }
+
+    /// <summary>蓝牙关着或适配器被禁用时，返回该跟用户说的话；一切正常返回 null。</summary>
+    private async Task<string?> DescribeBluetoothUnavailableAsync()
+    {
+        try
+        {
+            return await _deviceService.GetBluetoothStateAsync() switch
+            {
+                BluetoothState.Off =>
+                    "电脑的蓝牙关着。先在「设置 → 蓝牙和其他设备」里打开开关，再点「连接」。",
+                BluetoothState.Disabled =>
+                    "蓝牙适配器被禁用了。到「设备管理器」里启用，再点「连接」。",
+                _ => null
+            };
+        }
+        catch
+        {
+            // 查不到状态就不要挡着用户，让他照常试
+            return null;
+        }
     }
 
     /// <summary>重连途中按了按钮：停下，并且保证不会再自己爬起来。</summary>
@@ -1096,6 +1127,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
             // 先让蓝牙栈把链路收拾一下，顺便看看手机还在不在。
             await Task.Delay(1200, token);
             if (token.IsCancellationRequested || version != _intentVersion) return;
+
+            // 先看电脑这边的蓝牙还在不在。关掉蓝牙时链路查询本身会抛异常（返回「不知道」），
+            // 于是重连循环会一路重试下去，每次都被系统拒，日志里全是 DeniedBySystem。
+            var blocked = await DescribeBluetoothUnavailableAsync();
+            if (blocked is not null)
+            {
+                Log.Info("掉线后蓝牙不可用，放弃自动重连");
+                ApplyState(ConnState.Idle, "未连接", blocked);
+                return;
+            }
 
             var linkUp = await _deviceService.IsLinkConnectedAsync(device.Id);
             if (linkUp == false)

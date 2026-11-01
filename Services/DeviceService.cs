@@ -105,7 +105,7 @@ public sealed class DeviceService
         }
         catch (Exception ex)
         {
-            Log.Warn($"查询蓝牙链路状态失败: {ex.Message}");
+            Log.Warn($"查询蓝牙链路状态失败: {ex.GetType().Name} {ex.Message}".TrimEnd());
             return null;
         }
     }
