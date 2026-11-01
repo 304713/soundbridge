@@ -2,19 +2,23 @@ using System.ComponentModel;
 using System.Drawing;
 using SoundBridge.Infrastructure;
 using SoundBridge.ViewModels;
-using WinForms = System.Windows.Forms;
 
 namespace SoundBridge.Services;
 
+/// <summary>
+/// 托盘图标 + 右键菜单，把界面上的三件事（连接 / 自启 / 退出）搬到托盘里。
+/// 图标和消息在 <see cref="TrayIcon"/>，这里只回答「菜单上该有哪些项、现在是什么状态」。
+/// </summary>
 public sealed class TrayService : IDisposable
 {
     private readonly MainViewModel _viewModel;
     private readonly Action _showWindow;
     private readonly Action _exit;
-    private readonly WinForms.NotifyIcon _notifyIcon;
-    private readonly WinForms.ToolStripMenuItem _toggleItem;
-    private readonly WinForms.ToolStripMenuItem _autoStartItem;
-    private Icon? _icon;
+    private readonly TrayIcon _tray;
+
+    /// <summary>缓存托盘图标：状态文字随时会变，图标只在连接状态真的变了才重画。</summary>
+    private Icon? _currentIcon;
+    private bool? _iconConnected;
 
     public TrayService(MainViewModel viewModel, Action showWindow, Action exit)
     {
@@ -22,31 +26,7 @@ public sealed class TrayService : IDisposable
         _showWindow = showWindow;
         _exit = exit;
 
-        _toggleItem = new WinForms.ToolStripMenuItem("连接", null, (_, _) => _viewModel.PrimaryCommand.Execute(null));
-        _autoStartItem = new WinForms.ToolStripMenuItem("开机自启", null, (_, _) => _viewModel.AutoStart = !_viewModel.AutoStart);
-
-        var menu = new WinForms.ContextMenuStrip { ShowImageMargin = false };
-        var openItem = new WinForms.ToolStripMenuItem("打开主界面", null, (_, _) => _showWindow())
-        {
-            Font = new Font(menu.Font, FontStyle.Bold)
-        };
-        menu.Items.Add(openItem);
-        menu.Items.Add(new WinForms.ToolStripSeparator());
-        menu.Items.Add(_toggleItem);
-        menu.Items.Add(new WinForms.ToolStripSeparator());
-        menu.Items.Add(_autoStartItem);
-        menu.Items.Add(new WinForms.ToolStripSeparator());
-        menu.Items.Add(new WinForms.ToolStripMenuItem("退出", null, (_, _) => _exit()));
-
-        _icon = AppIconFactory.CreateTrayIcon(false);
-        _notifyIcon = new WinForms.NotifyIcon
-        {
-            Icon = _icon,
-            Text = "声桥",
-            Visible = true,
-            ContextMenuStrip = menu
-        };
-        _notifyIcon.DoubleClick += (_, _) => _showWindow();
+        _tray = new TrayIcon(showWindow, ShowContextMenu);
 
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         UpdateVisual();
@@ -59,7 +39,6 @@ public sealed class TrayService : IDisposable
             or nameof(MainViewModel.IsBusy)
             or nameof(MainViewModel.SelectedDevice)
             or nameof(MainViewModel.StatusText)
-            or nameof(MainViewModel.ActionText)
             or nameof(MainViewModel.SleepTimerTrayText)
             or nameof(MainViewModel.AutoStart))
         {
@@ -67,25 +46,42 @@ public sealed class TrayService : IDisposable
         }
     }
 
+    /// <summary>
+    /// 每次右键都现读一遍视图模型。菜单是临时建的，不用跟着状态变化去维护——
+    /// 也就不会出现「托盘菜单里的连接按钮还是禁用状态」这种过时显示。
+    /// </summary>
+    private void ShowContextMenu()
+    {
+        var toggleText = _viewModel.IsReconnecting
+            ? "停止重连"
+            : _viewModel.IsConnected ? "断开连接" : "连接";
+
+        var canToggle = _viewModel.IsReconnecting || _viewModel.IsConnected || _viewModel.SelectedDevice is not null;
+
+        _tray.ShowMenu(new[]
+        {
+            new TrayMenuEntry("打开主界面", _showWindow, IsDefault: true),
+            TrayMenuEntry.Separator,
+            new TrayMenuEntry(toggleText, () => _viewModel.PrimaryCommand.Execute(null), canToggle),
+            TrayMenuEntry.Separator,
+            new TrayMenuEntry("开机自启", () => _viewModel.AutoStart = !_viewModel.AutoStart, Checked: _viewModel.AutoStart),
+            TrayMenuEntry.Separator,
+            new TrayMenuEntry("退出", _exit)
+        });
+    }
+
     private void UpdateVisual()
     {
         try
         {
             var connected = _viewModel.IsConnected;
-            var next = AppIconFactory.CreateTrayIcon(connected);
+            if (_currentIcon is null || _iconConnected != connected)
+            {
+                _currentIcon = AppIconFactory.CreateTrayIcon(connected);
+                _iconConnected = connected;
+            }
 
-            _notifyIcon.Icon = next;
-            _icon?.Dispose();
-            _icon = next;
-
-            _notifyIcon.Text = Truncate(BuildTooltip(), 63);
-            _toggleItem.Text = _viewModel.IsReconnecting
-                ? "停止重连"
-                : _viewModel.IsConnected ? "断开连接" : "连接";
-            _toggleItem.Enabled = _viewModel.IsReconnecting
-                                  || _viewModel.IsConnected
-                                  || _viewModel.SelectedDevice is not null;
-            _autoStartItem.Checked = _viewModel.AutoStart;
+            _tray.Update(_currentIcon, BuildTooltip());
         }
         catch (Exception ex)
         {
@@ -102,13 +98,9 @@ public sealed class TrayService : IDisposable
             : $"声桥 · {_viewModel.StatusText} · {timer}";
     }
 
-    private static string Truncate(string text, int max) => text.Length <= max ? text : text[..max];
-
     public void Dispose()
     {
         _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
-        _notifyIcon.Visible = false;
-        _notifyIcon.Dispose();
-        _icon?.Dispose();
+        _tray.Dispose();
     }
 }

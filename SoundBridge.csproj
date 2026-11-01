@@ -5,7 +5,6 @@
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
-    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -18,11 +17,10 @@
     <AssemblyDescription>把手机的声音转到电脑播放（蓝牙音频接收器）</AssemblyDescription>
     <Company>声桥</Company>
     <Copyright>© 2026 声桥</Copyright>
-    <Version>1.5.0</Version>
-    <FileVersion>1.5.0.0</FileVersion>
-    <InformationalVersion>1.5.0</InformationalVersion>
+    <Version>1.5.1</Version>
+    <FileVersion>1.5.1.0</FileVersion>
+    <InformationalVersion>1.5.1</InformationalVersion>
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
-    <NoWarn>$(NoWarn);WFAC010</NoWarn>
   </PropertyGroup>
 
   <!-- 发布构建不要把编译机的目录结构写进程序集（默认会带 CodeView 记录里的 .pdb 绝对路径） -->
@@ -30,5 +28,10 @@
     <DebugType>none</DebugType>
     <PathMap>$(MSBuildProjectDirectory)=/soundbridge</PathMap>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 图标是用 GDI+ 画的（托盘要的是 HICON），WinForms 去掉后这笔引用得自己补 -->
+    <Reference Include="System.Drawing.Common" />
+  </ItemGroup>
 
 </Project>

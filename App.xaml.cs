@@ -140,6 +140,10 @@ public partial class App : System.Windows.Application
         _tray?.Dispose();
         _viewModel?.Dispose();
         _mutex?.Dispose();
+
+        // 必须最后调：上面几个 Dispose 里都还在写日志，队列要留到它们写完再刷盘
+        Log.Shutdown();
+
         base.OnExit(e);
     }
 }

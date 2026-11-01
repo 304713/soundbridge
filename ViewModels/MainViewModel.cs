@@ -27,6 +27,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     private string _statusText = "未连接";
     private string _statusColorHex = ColorIdle;
     private string _statusDetail = "还没连。选好手机，点下面的「连接」。";
+    private bool _canFixOutputManually;
     private bool _hasDevices;
     private bool _initialized;
 
@@ -102,6 +103,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OpenLogCommand = new RelayCommand(OpenLog);
         OpenPrivacyCommand = new RelayCommand(ShowPrivacy);
         OpenHelpCommand = new RelayCommand(ShowHelp);
+        OpenSoundSettingsCommand = new RelayCommand(OpenSoundSettings);
 
         // 设置在这里就读进来，而不是等 InitializeAsync：
         // 首次引导的判断要赶在窗口显示时发生，那时初始化还没跑完。
@@ -155,6 +157,9 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public RelayCommand OpenPrivacyCommand { get; }
     public RelayCommand OpenHelpCommand { get; }
 
+    /// <summary>打开系统的声音设置，让用户自己把默认播放设备指过去。</summary>
+    public RelayCommand OpenSoundSettingsCommand { get; }
+
     /// <summary>第一次打开软件，还没看过使用说明。</summary>
     public bool ShouldShowWelcome => !_settingsService.Current.HasSeenWelcome;
 
@@ -201,7 +206,24 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    public string VersionText => "v1.5.0";
+    /// <summary>
+    /// 直接从程序集取版本号。以前是写死的字符串，改版本时忘了同步，
+    /// 界面就会一直显示旧号——用户没法从界面上判断自己装的是哪一版。
+    /// </summary>
+    public string VersionText { get; } = ReadVersionText();
+
+    private static string ReadVersionText()
+    {
+        try
+        {
+            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            return version is null ? string.Empty : $"v{version.Major}.{version.Minor}.{version.Build}";
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
 
     public SinkDevice? SelectedDevice
     {
@@ -272,6 +294,16 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         get => _statusDetail;
         private set => SetProperty(ref _statusDetail, value);
+    }
+
+    /// <summary>
+    /// 自动切换默认播放设备没成功，需要用户去系统里手动指一下。
+    /// 界面据此在说明文字旁边露出「手动设置」。
+    /// </summary>
+    public bool CanFixOutputManually
+    {
+        get => _canFixOutputManually;
+        private set => SetProperty(ref _canFixOutputManually, value);
     }
 
     public string EmptyHint => EmptyHintDetail;
@@ -595,30 +627,98 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         var target = _selectedOutput;
         if (target is null) return;
 
-        var current = AudioOutputService.GetOutputs().FirstOrDefault(o => o.IsDefault);
-        var alreadyDefault = current is not null &&
-                             string.Equals(current.Id, target.Id, StringComparison.OrdinalIgnoreCase);
-
-        if (!alreadyDefault)
+        if (AudioOutputService.IsDefaultOutput(target.Id))
         {
-            if (AudioOutputService.TrySetDefault(target.Id, out var error))
-            {
-                Log.Info($"默认播放设备已切到: {target.Name}");
-            }
-            else
-            {
-                Log.Warn($"切换声音输出失败: {error}");
-                StatusDetail = $"没能切到那台设备：{error}";
-                ApplyVolumeLimit(target);
-                return;
-            }
+            ShowOutputOk(target);
+            ApplyVolumeLimit(target);
+            return;
         }
 
-        // 这行是界面上唯一的状态补充说明：「已连接」胶囊说不清声音去了哪台设备。
-        StatusDetail = $"出声设备：{target.Name}";
+        var result = AudioOutputService.TrySetDefault(target.Id, out var error);
+
+        switch (result)
+        {
+            case DefaultSwitchResult.Switched:
+                Log.Info($"默认播放设备已切到: {target.Name}");
+                ShowOutputOk(target);
+                _ = GuardAsync(() => VerifyDefaultAsync(target), "校验默认设备");
+                break;
+
+            case DefaultSwitchResult.AlreadyDefault:
+                ShowOutputOk(target);
+                break;
+
+            case DefaultSwitchResult.DeviceMissing:
+                Log.Warn($"切换声音输出失败: {error}");
+                ExplainManualSwitch("选中的播放设备已经不在了，换一个试试");
+                break;
+
+            case DefaultSwitchResult.Unsupported:
+                // 不是用户的问题：这台机器上这个未公开接口用不了，只能手动选一次
+                Log.Warn("这台电脑无法由程序切换默认播放设备，转为提示手动设置");
+                ExplainManualSwitch("这台电脑不允许程序改默认播放设备，需要你手动选一次");
+                break;
+
+            default:
+                Log.Warn($"切换声音输出失败: {error}");
+                ExplainManualSwitch($"没能切到那台设备：{error}");
+                break;
+        }
 
         // 即便设备本来就是默认的，音量也照样要压一遍——上次用完留下的音量跟这次无关。
         ApplyVolumeLimit(target);
+    }
+
+    private void ShowOutputOk(AudioOutput target)
+    {
+        // 这行是界面上唯一的状态补充说明：「已连接」胶囊说不清声音去了哪台设备。
+        StatusDetail = $"出声设备：{target.Name}";
+        CanFixOutputManually = false;
+    }
+
+    private void ExplainManualSwitch(string detail)
+    {
+        StatusDetail = detail;
+        CanFixOutputManually = true;
+    }
+
+    /// <summary>
+    /// 切换接口是未公开的，签名对不上时会出现「返回成功但什么都没变」。
+    /// 所以切完回头看一眼系统默认设备到底是谁——接口说成功了不算数。
+    /// </summary>
+    private async Task VerifyDefaultAsync(AudioOutput target)
+    {
+        for (var i = 0; i < 12; i++)
+        {
+            await Task.Delay(150);
+            if (_disposed) return;
+            if (AudioOutputService.IsDefaultOutput(target.Id)) return;
+        }
+
+        Log.Warn("切换默认播放设备返回成功，但系统默认设备没有变化（IPolicyConfig 可能已失效）");
+        ExplainManualSwitch("系统没有接受这次切换，声音可能还在原来的设备上");
+    }
+
+    private void OpenSoundSettings()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("ms-settings:sound") { UseShellExecute = true });
+            Log.Info("已打开系统的声音设置");
+        }
+        catch (Exception ex)
+        {
+            Log.Error("打开声音设置失败，改用传统面板", ex);
+            try
+            {
+                Process.Start(new ProcessStartInfo("mmsys.cpl") { UseShellExecute = true });
+            }
+            catch (Exception inner)
+            {
+                Log.Error("打开声音面板也失败", inner);
+                StatusDetail = "没法自动打开系统设置：请在任务栏音量图标上右键，选「声音设置」";
+            }
+        }
     }
 
     /// <summary>把设备音量压到上限以内。已经比上限低就不动。</summary>

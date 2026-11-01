@@ -111,8 +111,22 @@
         </Grid>
 
         <!-- 唯一的一行状态说明：重连进度、失败原因都落在这里 -->
-        <TextBlock Grid.Row="1" Text="{Binding StatusDetail}" Style="{StaticResource Caption}"
-                   Margin="2,10,2,0" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+        <Grid Grid.Row="1" Margin="2,10,2,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Text="{Binding StatusDetail}" Style="{StaticResource Caption}"
+                       VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+
+            <!-- 自动切默认设备失败时才出现：给一条能走通的路，别只留一句「失败」 -->
+            <Button Grid.Column="1" Content="去手动选 →" Style="{StaticResource LinkButton}"
+                    FontSize="11.5" Margin="10,0,0,0" VerticalAlignment="Center"
+                    Command="{Binding OpenSoundSettingsCommand}"
+                    Visibility="{Binding CanFixOutputManually, Converter={StaticResource BoolToVis}}" />
+        </Grid>
 
         <!-- 主体：左设备 / 右配置 -->
         <Grid Grid.Row="2" Margin="0,12,0,0">

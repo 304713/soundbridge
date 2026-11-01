@@ -38,6 +38,12 @@ public partial class MainWindow : Window
         {
             e.Cancel = true;
             Hide();
+            return;
         }
+
+        // 没开「关闭时缩到托盘」时，关窗口就该退出。
+        // 否则窗口关掉了、进程还在，托盘里点「打开主界面」会因为窗口已关闭而抛异常。
+        e.Cancel = true;
+        if (System.Windows.Application.Current is App app) app.ExitApplication();
     }
 }

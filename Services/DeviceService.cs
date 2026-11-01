@@ -12,8 +12,14 @@ namespace SoundBridge.Services;
 /// </summary>
 public sealed class DeviceService
 {
-    /// <summary>A2DP 接收端设备 ID 里带着手机蓝牙地址，形如 ...&amp;0&amp;FCD90896116C_C00000000#</summary>
+    /// <summary>A2DP 接收端设备 ID 里带着手机蓝牙地址，形如 ...&amp;0&amp;0123456789AB_C00000000#</summary>
     private static readonly Regex AddressInId = new(@"&([0-9A-Fa-f]{12})_", RegexOptions.Compiled);
+
+    /// <summary>筛选器写一次就够：这东西每 3 秒枚举一次，每次都记等于往日志里灌水。</summary>
+    private bool _selectorLogged;
+
+    /// <summary>上一次的候选数量，只在数量变化时记一行。</summary>
+    private int _lastCount = -1;
 
     public async Task<IReadOnlyList<SinkDevice>> GetSinkDevicesAsync()
     {
@@ -22,10 +28,18 @@ public sealed class DeviceService
         try
         {
             var selector = AudioPlaybackConnection.GetDeviceSelector();
-            Log.Info($"枚举设备，筛选器: {selector}");
+            if (!_selectorLogged)
+            {
+                Log.Info($"枚举设备，筛选器: {selector}");
+                _selectorLogged = true;
+            }
 
             var infos = await DeviceInformation.FindAllAsync(selector);
-            Log.Info($"系统返回 {infos.Count} 个候选设备");
+            if (infos.Count != _lastCount)
+            {
+                Log.Info($"系统返回 {infos.Count} 个候选设备");
+                _lastCount = infos.Count;
+            }
 
             foreach (var info in infos)
             {
